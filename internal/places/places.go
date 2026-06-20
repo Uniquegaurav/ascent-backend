@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"time"
@@ -47,8 +48,17 @@ type rawPlace struct {
 }
 
 type searchResp struct {
-	Results []rawPlace `json:"results"`
-	Status  string     `json:"status"`
+	Results      []rawPlace `json:"results"`
+	Status       string     `json:"status"`
+	ErrorMessage string     `json:"error_message"`
+}
+
+// logStatus surfaces a non-OK Google status (REQUEST_DENIED, OVER_QUERY_LIMIT…)
+// so misconfigured keys/APIs are visible in the deploy logs.
+func logStatus(api, status, errMsg string) {
+	if status != "" && status != "OK" && status != "ZERO_RESULTS" {
+		slog.Warn("google api non-ok", "api", api, "status", status, "error", errMsg)
+	}
 }
 
 // Place is the trimmed result used to build explore items.
@@ -105,6 +115,7 @@ func (c *Client) TextSearch(ctx context.Context, query string, lat, lng float64)
 	if err := c.get(ctx, "/place/textsearch/json", q, &r); err != nil {
 		return nil, err
 	}
+	logStatus("textsearch", r.Status, r.ErrorMessage)
 	return mapPlaces(r.Results), nil
 }
 
@@ -169,7 +180,8 @@ type detailResp struct {
 			} `json:"location"`
 		} `json:"geometry"`
 	} `json:"result"`
-	Status string `json:"status"`
+	Status       string `json:"status"`
+	ErrorMessage string `json:"error_message"`
 }
 
 func (c *Client) Details(ctx context.Context, placeID string) (Detail, error) {
@@ -180,6 +192,7 @@ func (c *Client) Details(ctx context.Context, placeID string) (Detail, error) {
 	if err := c.get(ctx, "/place/details/json", q, &r); err != nil {
 		return Detail{}, err
 	}
+	logStatus("details", r.Status, r.ErrorMessage)
 	res := r.Result
 	d := Detail{
 		PlaceID: res.PlaceID, Name: res.Name, Address: res.FormattedAddress, Phone: res.FormattedPhone,
@@ -228,7 +241,8 @@ type geocodeResp struct {
 			Types     []string `json:"types"`
 		} `json:"address_components"`
 	} `json:"results"`
-	Status string `json:"status"`
+	Status       string `json:"status"`
+	ErrorMessage string `json:"error_message"`
 }
 
 func (c *Client) ReverseGeocode(ctx context.Context, lat, lng float64) (string, error) {
@@ -238,6 +252,7 @@ func (c *Client) ReverseGeocode(ctx context.Context, lat, lng float64) (string, 
 	if err := c.get(ctx, "/geocode/json", q, &r); err != nil {
 		return "", err
 	}
+	logStatus("geocode", r.Status, r.ErrorMessage)
 	city, country := "", ""
 	for _, res := range r.Results {
 		for _, comp := range res.AddressComponents {
