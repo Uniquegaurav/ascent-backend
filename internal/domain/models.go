@@ -1,0 +1,158 @@
+package domain
+
+// JSON tags intentionally mirror the Kotlin app's DTOs so the client needs no
+// parsing changes when it switches from the mock engine to this server.
+
+type User struct {
+	ID          string   `json:"id"`
+	Name        string   `json:"name"`
+	Phone       string   `json:"phone"`
+	Onboarded   bool     `json:"onboarded"`
+	AvatarHue   float64  `json:"avatarHue"`
+	InterestIDs []string `json:"interestIds"`
+}
+
+type Interest struct {
+	ID       string `json:"id"`
+	Label    string `json:"label"`
+	Emoji    string `json:"emoji"`
+	Theme    string `json:"theme"`
+	ImageURL string `json:"imageUrl"`
+	Vibe     string `json:"vibe"`
+}
+
+type Peak struct {
+	ID          string  `json:"id"`
+	Name        string  `json:"name"`
+	Emoji       string  `json:"emoji"`
+	InterestID  string  `json:"interestId"`
+	Theme       string  `json:"theme"`
+	Progress    float64 `json:"progress"`
+	MomentCount int     `json:"momentCount"`
+	ImageURL    string  `json:"imageUrl"`
+}
+
+type Milestone struct {
+	ID          string  `json:"id"`
+	Title       string  `json:"title"`
+	Description string  `json:"description"`
+	Emoji       string  `json:"emoji"`
+	Reached     bool    `json:"reached"`
+	Progress    float64 `json:"progress"`
+}
+
+type Range struct {
+	ClimberName  string      `json:"climberName"`
+	Peaks        []Peak      `json:"peaks"`
+	Milestones   []Milestone `json:"milestones"`
+	TotalMoments int         `json:"totalMoments"`
+}
+
+type GeoLocation struct {
+	Name string  `json:"name"`
+	Lat  float64 `json:"lat"`
+	Lng  float64 `json:"lng"`
+}
+
+type Experience struct {
+	ID          string       `json:"id"`
+	Title       string       `json:"title"`
+	Description string       `json:"description"`
+	Category    string       `json:"category"`
+	InterestID  string       `json:"interestId"`
+	ImageURLs   []string     `json:"imageUrls"`
+	Location    *GeoLocation `json:"location"`
+	DateEpochMs int64        `json:"dateEpochMs"`
+	MoodScore   int          `json:"moodScore"`
+}
+
+type Friend struct {
+	ID            string  `json:"id"`
+	Name          string  `json:"name"`
+	AvatarHue     float64 `json:"avatarHue"`
+	Status        string  `json:"status"`
+	PeaksExplored int     `json:"peaksExplored"`
+	LastAscent    *string `json:"lastAscent"`
+}
+
+type Challenge struct {
+	ID          string `json:"id"`
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	Emoji       string `json:"emoji"`
+	InterestID  string `json:"interestId"`
+	Target      int    `json:"target"`
+	Progress    int    `json:"progress"`
+	Unit        string `json:"unit"`
+	Joined      bool   `json:"joined"`
+}
+
+// ---- Explore + Ascents (the new model) -----------------------------------
+
+type ExploreItem struct {
+	ID           string  `json:"id"`
+	Title        string  `json:"title"`
+	Subtitle     string  `json:"subtitle"`
+	Category     string  `json:"category"`
+	Kind         string  `json:"kind"` // TREK | PLACE | EVENT | HOBBY | DESTINATION
+	Country      string  `json:"country"`
+	LocationName string  `json:"locationName"`
+	ImageURL     string  `json:"imageUrl"`
+	Theme        string  `json:"theme"`
+	Description  string  `json:"description"`
+	Popularity   int     `json:"popularity"`
+}
+
+type ExploreSection struct {
+	ID     string        `json:"id"`
+	Title  string        `json:"title"`
+	Layout string        `json:"layout"` // CAROUSEL | GRID | CARDS | SPOTLIGHT
+	Items  []ExploreItem `json:"items"`
+}
+
+type ExploreFeed struct {
+	Sections []ExploreSection `json:"sections"`
+}
+
+type Ascent struct {
+	ID           string `json:"id"`
+	Title        string `json:"title"`
+	Category     string `json:"category"`
+	Theme        string `json:"theme"`
+	ImageURL     string `json:"imageUrl"`
+	Kind         string `json:"kind"`
+	LocationName string `json:"locationName"`
+	Status       string `json:"status"` // EXPLORING | ACTIVE | SUMMITED
+	LogCount     int    `json:"logCount"`
+	CreatedAtMs  int64  `json:"createdAtMs"`
+}
+
+type Log struct {
+	ID          string       `json:"id"`
+	AscentID    string       `json:"ascentId"`
+	Title       string       `json:"title"`
+	Note        string       `json:"note"`
+	MoodScore   int          `json:"moodScore"`
+	ImageURLs   []string     `json:"imageUrls"`
+	Location    *GeoLocation `json:"location"`
+	DateEpochMs int64        `json:"dateEpochMs"`
+}
+
+type AscentDetail struct {
+	Ascent Ascent `json:"ascent"`
+	Logs   []Log  `json:"logs"`
+}
+
+type FeedItem struct {
+	ID              string  `json:"id"`
+	AuthorName      string  `json:"authorName"`
+	AuthorHue       float64 `json:"authorHue"`
+	IsSelf          bool    `json:"isSelf"`
+	Title           string  `json:"title"`
+	Description     string  `json:"description"`
+	Category        string  `json:"category"`
+	Location        *string `json:"location"`
+	TimestampEpochMs int64  `json:"timestampEpochMs"`
+	Reactions       int     `json:"reactions"`
+	ReactedByMe     bool    `json:"reactedByMe"`
+}

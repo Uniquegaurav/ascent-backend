@@ -1,0 +1,33 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: summit
+      POSTGRES_PASSWORD: summit
+      POSTGRES_DB: summit
+    ports:
+      - "5432:5432"
+    volumes:
+      - summit_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U summit"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      ENV: dev
+      PORT: "8080"
+      DATABASE_URL: postgres://summit:summit@db:5432/summit?sslmode=disable
+      JWT_SECRET: dev-secret-change-me-please-0000000000
+      OTP_DEV_CODE: "000000"
+    ports:
+      - "8080:8080"
+
+volumes:
+  summit_pg:
