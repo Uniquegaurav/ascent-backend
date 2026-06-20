@@ -1,74 +1,62 @@
-# Deploying the Ascent backend to Railway
+# Deploying the Ascent backend (Render)
 
-The repo is deploy-ready: a `Dockerfile`, `railway.toml` (Dockerfile builder + `/health`
-check), env-driven config, and migrations that run automatically on first boot.
+The repo is deploy-ready: a `Dockerfile`, a `render.yaml` Blueprint (web service +
+Postgres, auto-wired), env-driven config, and migrations that run on first boot.
 
-> OTP is intentionally left in **dev mode** (`000000` always verifies) — treat the URL as
-> a **private demo**. To go truly public, wire a real SMS provider first.
+> OTP is intentionally in **dev mode** (`000000` always verifies) — treat the URL as a
+> **private demo**. To go truly public, wire a real SMS provider first.
 
 ## 1. Push to GitHub
-A local git repo with an initial commit already exists. Create an empty GitHub repo, then:
+A local git repo with commits already exists. Create an empty GitHub repo, then:
 ```bash
 cd ~/AndroidStudioProjects/summit-backend
 git remote add origin https://github.com/<you>/summit-backend.git
 git push -u origin main
 ```
 
-## 2. Create the Railway project
-1. Go to **railway.app → New Project → Deploy from GitHub repo** → pick `summit-backend`.
-   Railway reads the `Dockerfile` automatically.
-2. In the project, **New → Database → Add PostgreSQL**. This creates a `DATABASE_URL`.
+## 2. Deploy on Render (Blueprint — recommended)
+1. **render.com → New → Blueprint**, connect your GitHub, pick `summit-backend`.
+2. Render reads `render.yaml` and proposes: **ascent-api** (Docker web service) +
+   **ascent-db** (free Postgres). Click **Apply**.
+3. It builds the Dockerfile, creates the DB, injects `DATABASE_URL`, generates
+   `JWT_SECRET`, and on boot runs migrations (schema + explore/demo seed).
+4. When live, the service shows a URL like `https://ascent-api.onrender.com`.
 
-## 3. Set variables (on the API service → Variables)
-| Variable | Value |
-|---|---|
-| `DATABASE_URL` | `${{Postgres.DATABASE_URL}}` (reference the Postgres service) |
-| `JWT_SECRET` | a long random string (e.g. `openssl rand -hex 32`) |
-| `OTP_DEV_CODE` | `000000` (optional; this is the default) |
+> No Blueprint? Do it manually: **New → Web Service** → connect repo → Runtime **Docker**
+> → Health check path `/health`; then **New → Postgres** (free) and add an env var
+> `DATABASE_URL` = the DB's *Internal Connection String*; add `JWT_SECRET` = a random
+> string. (Don't set `PORT` — Render injects it; the app already binds `:$PORT`.)
 
-- **Do not set `PORT`** — Railway injects it and the app already binds `:$PORT`.
-- Leave `ENV` unset (defaults to `dev`) so the demo code `000000` keeps working.
-- `GOOGLE_PLACES_KEY` — optional; without it, curated sample places are served.
-
-## 4. Deploy + get a URL
-- Railway builds and starts the service; on boot it runs migrations (creates the schema +
-  seeds the explore catalog and demo climbers).
-- **Service → Settings → Networking → Generate Domain** → you get
-  `https://<something>.up.railway.app`.
-
-## 5. Verify
+## 3. Verify
 ```bash
-./scripts/smoke.sh https://<something>.up.railway.app
+./scripts/smoke.sh https://ascent-api.onrender.com
 ```
-Expect the explore sections, an ascent created, a log added, etc.
+(The free service sleeps when idle, so the first request after a while takes ~30s to wake.)
 
-## 6. Point the app at it
-In the Kotlin app, edit one line —
-`shared/.../data/remote/PlatformConfig.kt`:
+## 4. Point the app at it
+Edit one line — `shared/.../data/remote/PlatformConfig.kt`:
 ```kotlin
-const val DEPLOYED_BASE_URL = "https://<something>.up.railway.app"
+const val DEPLOYED_BASE_URL = "https://ascent-api.onrender.com"
 ```
-Rebuild the app. It now talks to the cloud from the emulator **and real phones** (HTTPS,
-so no cleartext exception needed).
+Rebuild the app. It now talks to the cloud from the emulator **and real phones** (HTTPS).
 
 ---
 
-## Alternative: Railway CLI (no GitHub)
-```bash
-brew install railway        # or: npm i -g @railway/cli
-railway login
-cd ~/AndroidStudioProjects/summit-backend
-railway init
-railway add --database postgres
-railway up                  # builds the Dockerfile and deploys
-railway domain              # generate a public URL
-# set JWT_SECRET in the dashboard or: railway variables set JWT_SECRET=...
-```
-
 ## Notes
-- **Migrations** run on every boot but only apply unseen versions (tracked in
-  `schema_migrations`), so redeploys are safe. Keep to a single instance while the
-  embedded runner is in use (no migration locking yet).
-- **Connection SSL**: the `${{Postgres.DATABASE_URL}}` reference uses Railway's private
-  network (no SSL needed). If you ever use the *public* DB URL, append `?sslmode=require`.
-- **Cost**: Railway's trial then ~$5/mo; the service + Postgres are small.
+- **Free tier caveats:** the free web service **sleeps after ~15 min idle** (cold start on
+  next hit); Render's **free Postgres expires** after its limited window — fine for a demo,
+  upgrade the DB when you need permanence.
+- **Migrations** run every boot but only apply unseen versions (`schema_migrations`), so
+  redeploys/cold-starts are safe. Keep **1 instance** (no migration locking yet).
+- **SSL:** Render's internal `DATABASE_URL` connects fine; if you ever use the *external*
+  DB URL, append `?sslmode=require`.
+
+## Alternative: Railway CLI
+```bash
+brew install railway      # or npm i -g @railway/cli
+railway login && railway init
+railway add --database postgres
+railway up && railway domain
+# set JWT_SECRET in the dashboard
+```
+(Railway's `railway.toml` is also in the repo.)
