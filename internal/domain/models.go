@@ -101,6 +101,27 @@ type ExploreItem struct {
 	Theme        string  `json:"theme"`
 	Description  string  `json:"description"`
 	Popularity   int     `json:"popularity"`
+	Rating       float64 `json:"rating"`
+	RatingsTotal int     `json:"ratingsTotal"`
+	PlaceID      string  `json:"placeId"`
+	SearchQuery  string  `json:"searchQuery"` // for HOBBY launchers
+}
+
+type ExploreReview struct {
+	Author string  `json:"author"`
+	Rating float64 `json:"rating"`
+	Text   string  `json:"text"`
+	When   string  `json:"when"`
+}
+
+type ExploreDetail struct {
+	Item    ExploreItem     `json:"item"`
+	Photos  []string        `json:"photos"`
+	Reviews []ExploreReview `json:"reviews"`
+	Address string          `json:"address"`
+	Phone   string          `json:"phone"`
+	Website string          `json:"website"`
+	Hours   []string        `json:"hours"`
 }
 
 type ExploreSection struct {

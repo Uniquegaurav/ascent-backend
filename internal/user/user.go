@@ -46,6 +46,13 @@ func (r *Repo) interestIDs(ctx context.Context, userID string) ([]string, error)
 	return ids, rows.Err()
 }
 
+func (r *Repo) UpdateName(ctx context.Context, userID, name string) (domain.User, error) {
+	if _, err := r.pool.Exec(ctx, `UPDATE users SET name = $2 WHERE id = $1`, userID, name); err != nil {
+		return domain.User{}, err
+	}
+	return r.Get(ctx, userID)
+}
+
 func (r *Repo) CompleteOnboarding(ctx context.Context, userID, name string, interestIDs []string) (domain.User, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
@@ -86,6 +93,29 @@ func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		httpx.Error(w, http.StatusInternalServerError, "could not load user")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, u)
+}
+
+type nameReq struct {
+	Name string `json:"name"`
+}
+
+func (h *Handler) UpdateName(w http.ResponseWriter, r *http.Request) {
+	var req nameReq
+	if err := httpx.Decode(r, &req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, "bad request")
+		return
+	}
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		httpx.Error(w, http.StatusBadRequest, "name required")
+		return
+	}
+	u, err := h.repo.UpdateName(r.Context(), httpx.UserID(r), name)
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, "could not update")
 		return
 	}
 	httpx.JSON(w, http.StatusOK, u)

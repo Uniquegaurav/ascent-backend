@@ -1,100 +1,229 @@
 package explore
 
 import (
+	"context"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
 
 	"github.com/kumargaurav/summit-backend/internal/domain"
 	"github.com/kumargaurav/summit-backend/internal/httpx"
+	"github.com/kumargaurav/summit-backend/internal/places"
 )
+
+type Handler struct{ pc *places.Client }
+
+func NewHandler(pc *places.Client) *Handler { return &Handler{pc: pc} }
+
+// Relative photo-proxy URL; the app prefixes the API base. Falls back to a stock
+// image when a place has no photo.
+func photoURL(ref string) string {
+	if ref == "" {
+		return "https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?auto=format&fit=crop&w=1200&q=80"
+	}
+	return "/place-photo?w=800&ref=" + url.QueryEscape(ref)
+}
+
+func themeForTypes(types []string) string {
+	has := func(s string) bool {
+		for _, t := range types {
+			if strings.Contains(t, s) {
+				return true
+			}
+		}
+		return false
+	}
+	switch {
+	case has("natural_feature"), has("park"), has("campground"), has("hiking"):
+		return "ALPINE"
+	case has("gym"), has("stadium"), has("sports"):
+		return "FOREST"
+	case has("book"), has("library"), has("school"), has("university"):
+		return "COSMIC"
+	case has("bar"), has("night_club"), has("movie"), has("art_gallery"):
+		return "EMBER"
+	case has("beach"), has("aquarium"), has("lodging"):
+		return "OCEAN"
+	default:
+		return "DESERT"
+	}
+}
+
+func placeToItem(p places.Place, category, kind string) domain.ExploreItem {
+	loc := p.Address
+	if i := strings.Index(loc, ","); i > 0 {
+		loc = strings.TrimSpace(loc[:i])
+	}
+	return domain.ExploreItem{
+		ID: p.PlaceID, PlaceID: p.PlaceID, Title: p.Name, Subtitle: p.Address,
+		Category: category, Kind: kind, LocationName: loc, ImageURL: photoURL(p.PhotoRef),
+		Theme: themeForTypes(p.Types), Rating: p.Rating, RatingsTotal: p.RatingsTotal,
+	}
+}
+
+func take(items []domain.ExploreItem, n int) []domain.ExploreItem {
+	if len(items) > n {
+		return items[:n]
+	}
+	return items
+}
+
+func (h *Handler) searchItems(ctx context.Context, query, category, kind string, lat, lng float64) []domain.ExploreItem {
+	res, err := h.pc.TextSearch(ctx, query, lat, lng)
+	if err != nil {
+		return nil
+	}
+	out := make([]domain.ExploreItem, 0, len(res))
+	for _, p := range res {
+		out = append(out, placeToItem(p, category, kind))
+	}
+	return out
+}
+
+// Hobby launchers are curated; tapping one runs a Places search for nearby teachers.
+var hobbyLaunchers = []domain.ExploreItem{
+	{ID: "hob_guitar", Title: "Learn Guitar", Subtitle: "Find classes near you", Category: "music", Kind: "HOBBY", Theme: "EMBER", SearchQuery: "guitar classes", ImageURL: img("1510915361894-db8b60106cb1")},
+	{ID: "hob_pottery", Title: "Pottery", Subtitle: "Workshops near you", Category: "art", Kind: "HOBBY", Theme: "AURORA", SearchQuery: "pottery workshop", ImageURL: img("1513364776144-60967b0f800f")},
+	{ID: "hob_dance", Title: "Dance", Subtitle: "Studios near you", Category: "dance", Kind: "HOBBY", Theme: "EMBER", SearchQuery: "dance classes", ImageURL: img("1504609773096-104ff2c73ba4")},
+	{ID: "hob_climb", Title: "Climbing", Subtitle: "Gyms near you", Category: "fitness", Kind: "HOBBY", Theme: "ALPINE", SearchQuery: "climbing gym", ImageURL: img("1522163182402-834f871fd851")},
+	{ID: "hob_yoga", Title: "Yoga", Subtitle: "Studios near you", Category: "fitness", Kind: "HOBBY", Theme: "FOREST", SearchQuery: "yoga studio", ImageURL: img("1545205597-3d9d02c29597")},
+	{ID: "hob_swim", Title: "Swimming", Subtitle: "Pools near you", Category: "fitness", Kind: "HOBBY", Theme: "OCEAN", SearchQuery: "swimming pool", ImageURL: img("1530549387789-4c1017266635")},
+}
 
 func img(id string) string {
 	return "https://images.unsplash.com/photo-" + id + "?auto=format&fit=crop&w=1200&q=80"
 }
 
-// Catalog is the hardcoded editorial content surfaced on the Explore screen.
-var catalog = []domain.ExploreItem{
-	{ID: "ex_valley", Title: "Valley of Flowers Trek", Subtitle: "Alpine meadows in bloom", Category: "trekking", Kind: "TREK", Country: "India", LocationName: "Uttarakhand", Theme: "ALPINE", Popularity: 98, ImageURL: img("1454496522488-7a8e488e8606"), Description: "A UNESCO-listed monsoon trek through a valley carpeted with wildflowers, peaking at Hemkund Sahib."},
-	{ID: "ex_hampi", Title: "Bouldering at Hampi", Subtitle: "World-class granite", Category: "fitness", Kind: "PLACE", Country: "India", LocationName: "Hampi", Theme: "DESERT", Popularity: 88, ImageURL: img("1522163182402-834f871fd851"), Description: "Sunset boulder fields among ancient ruins — a global climbing pilgrimage."},
-	{ID: "ex_triund", Title: "Triund Trek", Subtitle: "Overnight ridge camp", Category: "trekking", Kind: "TREK", Country: "India", LocationName: "Dharamshala", Theme: "ALPINE", Popularity: 91, ImageURL: img("1486870591958-9b9d0d1dda99"), Description: "A beginner-friendly Himalayan trek with a ridgeline campsite under the Dhauladhar range."},
-	{ID: "ex_goa_run", Title: "Goa Coastal Run", Subtitle: "Sunrise on the sand", Category: "running", Kind: "HOBBY", Country: "India", LocationName: "Goa", Theme: "OCEAN", Popularity: 72, ImageURL: img("1502904550040-7534597429ae"), Description: "A weekly beachfront running group — soft sand, salt air, easy pace."},
-	{ID: "ex_guitar", Title: "Learn Guitar", Subtitle: "From zero to first song", Category: "music", Kind: "HOBBY", Country: "Global", LocationName: "Anywhere", Theme: "EMBER", Popularity: 80, ImageURL: img("1510915361894-db8b60106cb1"), Description: "A 6-week path to playing your first songs, with practice prompts."},
-	{ID: "ex_pottery", Title: "Pottery Workshop", Subtitle: "Hands in clay", Category: "art", Kind: "EVENT", Country: "India", LocationName: "Bengaluru", Theme: "AURORA", Popularity: 64, ImageURL: img("1513364776144-60967b0f800f"), Description: "A weekend wheel-throwing intro — leave with your own bowl."},
-	{ID: "ex_tokyo", Title: "Tokyo Street Photography", Subtitle: "Neon after dark", Category: "photography", Kind: "DESTINATION", Country: "Japan", LocationName: "Tokyo", Theme: "OCEAN", Popularity: 85, ImageURL: img("1540959733332-eab4deabeeaf"), Description: "Chase reflections and neon through Shinjuku and Shibuya."},
-	{ID: "ex_patagonia", Title: "Patagonia W-Trek", Subtitle: "Granite towers", Category: "trekking", Kind: "DESTINATION", Country: "Chile", LocationName: "Torres del Paine", Theme: "ALPINE", Popularity: 95, ImageURL: img("1518602164578-cd0074062767"), Description: "The iconic multi-day circuit beneath the Torres del Paine."},
-	{ID: "ex_bookclub", Title: "Sci-fi Book Club", Subtitle: "One novel a month", Category: "reading", Kind: "EVENT", Country: "Global", LocationName: "Online", Theme: "COSMIC", Popularity: 58, ImageURL: img("1512820790803-83ca734da794"), Description: "Read a sci-fi classic each month and meet to dissect it."},
-	{ID: "ex_esports", Title: "Weekend Esports Arena", Subtitle: "Squad up", Category: "gaming", Kind: "PLACE", Country: "India", LocationName: "Bengaluru", Theme: "AURORA", Popularity: 70, ImageURL: img("1542751371-adc38448a05e"), Description: "LAN tournaments and casual nights at the city's best arena."},
-	{ID: "ex_salsa", Title: "Salsa Classes", Subtitle: "Two left feet welcome", Category: "dance", Kind: "HOBBY", Country: "Global", LocationName: "Anywhere", Theme: "EMBER", Popularity: 66, ImageURL: img("1504609773096-104ff2c73ba4"), Description: "Beginner salsa socials — rhythm first, perfection later."},
-	{ID: "ex_iceland", Title: "Iceland Ring Road", Subtitle: "Fire and ice", Category: "travel", Kind: "DESTINATION", Country: "Iceland", LocationName: "Route 1", Theme: "OCEAN", Popularity: 93, ImageURL: img("1504829857797-ddff29c27927"), Description: "Waterfalls, glaciers and black-sand beaches on the loop around Iceland."},
-}
-
-func byID(id string) (domain.ExploreItem, bool) {
-	for _, it := range catalog {
-		if it.ID == id {
-			return it, true
-		}
-	}
-	return domain.ExploreItem{}, false
-}
-
-func pick(ids ...string) []domain.ExploreItem {
-	out := make([]domain.ExploreItem, 0, len(ids))
-	for _, id := range ids {
-		if it, ok := byID(id); ok {
-			out = append(out, it)
-		}
-	}
-	return out
-}
-
-// Feed builds the ordered, mixed-layout sections for the Explore screen.
-func Feed(country string) domain.ExploreFeed {
-	return domain.ExploreFeed{Sections: []domain.ExploreSection{
-		{ID: "popular", Title: "Popular near you", Layout: "CARDS", Items: pick("ex_valley", "ex_hampi", "ex_triund", "ex_goa_run")},
-		{ID: "treks", Title: "Trending treks", Layout: "CAROUSEL", Items: pick("ex_valley", "ex_triund", "ex_patagonia")},
-		{ID: "hobbies", Title: "Start a new hobby", Layout: "GRID", Items: pick("ex_guitar", "ex_pottery", "ex_salsa", "ex_bookclub", "ex_esports", "ex_goa_run")},
-		{ID: "world", Title: "Around the world", Layout: "SPOTLIGHT", Items: pick("ex_patagonia", "ex_tokyo", "ex_iceland")},
-	}}
-}
-
-func Search(q string) []domain.ExploreItem {
-	q = strings.ToLower(strings.TrimSpace(q))
-	if q == "" {
-		return []domain.ExploreItem{}
-	}
-	out := []domain.ExploreItem{}
-	for _, it := range catalog {
-		hay := strings.ToLower(it.Title + " " + it.Category + " " + it.LocationName + " " + it.Country + " " + it.Subtitle)
-		if strings.Contains(hay, q) {
-			out = append(out, it)
-		}
-	}
-	return out
-}
-
-// ---- HTTP -----------------------------------------------------------------
-
-type Handler struct{}
-
-func NewHandler() *Handler { return &Handler{} }
-
 func (h *Handler) Feed(w http.ResponseWriter, r *http.Request) {
-	httpx.JSON(w, http.StatusOK, Feed(r.URL.Query().Get("country")))
+	lat, lng := parseLatLng(r)
+	if !h.pc.Enabled() || (lat == 0 && lng == 0) {
+		httpx.JSON(w, http.StatusOK, fallbackFeed())
+		return
+	}
+	ctx := r.Context()
+	sections := []domain.ExploreSection{
+		{ID: "popular", Title: "Popular near you", Layout: "CARDS", Items: take(h.searchItems(ctx, "top tourist attractions", "explore", "PLACE", lat, lng), 6)},
+		{ID: "treks", Title: "Trending treks", Layout: "CAROUSEL", Items: take(h.searchItems(ctx, "trekking trail hiking", "trekking", "TREK", lat, lng), 8)},
+		{ID: "hobbies", Title: "Start a new hobby", Layout: "GRID", Items: hobbyLaunchers},
+		{ID: "workshops", Title: "Workshops near you", Layout: "CARDS", Items: take(h.searchItems(ctx, "workshop class", "learning", "EVENT", lat, lng), 6)},
+	}
+	httpx.JSON(w, http.StatusOK, domain.ExploreFeed{Sections: sections})
 }
 
 func (h *Handler) Search(w http.ResponseWriter, r *http.Request) {
-	httpx.JSON(w, http.StatusOK, map[string]any{"items": Search(r.URL.Query().Get("q"))})
-}
-
-func (h *Handler) Item(w http.ResponseWriter, r *http.Request) {
-	if it, ok := byID(chi.URLParam(r, "id")); ok {
-		httpx.JSON(w, http.StatusOK, it)
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	if q == "" {
+		httpx.JSON(w, http.StatusOK, map[string]any{"items": []domain.ExploreItem{}})
 		return
 	}
-	httpx.Error(w, http.StatusNotFound, "not found")
+	lat, lng := parseLatLng(r)
+	if !h.pc.Enabled() {
+		httpx.JSON(w, http.StatusOK, map[string]any{"items": fallbackSearch(q)})
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": h.searchItems(r.Context(), q, "explore", "PLACE", lat, lng)})
 }
 
-// Lookup is exported so the ascent package can build an ascent from an item.
-func Lookup(id string) (domain.ExploreItem, bool) { return byID(id) }
+func (h *Handler) Detail(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	// Static hobby launcher → return as-is (no reviews).
+	for _, hob := range hobbyLaunchers {
+		if hob.ID == id {
+			httpx.JSON(w, http.StatusOK, domain.ExploreDetail{Item: hob})
+			return
+		}
+	}
+	if !h.pc.Enabled() {
+		if it, ok := fallbackItem(id); ok {
+			httpx.JSON(w, http.StatusOK, domain.ExploreDetail{Item: it})
+			return
+		}
+		httpx.Error(w, http.StatusNotFound, "not found")
+		return
+	}
+	d, err := h.pc.Details(r.Context(), id)
+	if err != nil {
+		httpx.Error(w, http.StatusBadGateway, "details lookup failed")
+		return
+	}
+	photos := make([]string, 0, len(d.PhotoRefs))
+	for _, ref := range d.PhotoRefs {
+		photos = append(photos, photoURL(ref))
+	}
+	reviews := make([]domain.ExploreReview, 0, len(d.Reviews))
+	for _, rv := range d.Reviews {
+		reviews = append(reviews, domain.ExploreReview{Author: rv.Author, Rating: rv.Rating, Text: rv.Text, When: rv.When})
+	}
+	hero := ""
+	if len(photos) > 0 {
+		hero = photos[0]
+	} else {
+		hero = photoURL("")
+	}
+	loc := d.Address
+	if i := strings.Index(loc, ","); i > 0 {
+		loc = strings.TrimSpace(loc[:i])
+	}
+	item := domain.ExploreItem{
+		ID: d.PlaceID, PlaceID: d.PlaceID, Title: d.Name, Subtitle: d.Address,
+		Category: "explore", Kind: "PLACE", LocationName: loc, ImageURL: hero,
+		Theme: themeForTypes(d.Types), Rating: d.Rating, RatingsTotal: d.RatingsTotal,
+	}
+	httpx.JSON(w, http.StatusOK, domain.ExploreDetail{
+		Item: item, Photos: photos, Reviews: reviews,
+		Address: d.Address, Phone: d.Phone, Website: d.Website, Hours: d.Hours,
+	})
+}
+
+// Photo proxies a Place photo (public — Coil can't send the JWT).
+func (h *Handler) Photo(w http.ResponseWriter, r *http.Request) {
+	ref := r.URL.Query().Get("ref")
+	width := 800
+	if v, err := strconv.Atoi(r.URL.Query().Get("w")); err == nil && v > 0 {
+		width = v
+	}
+	if ref == "" || !h.pc.Enabled() {
+		http.Redirect(w, r, photoURL(""), http.StatusFound)
+		return
+	}
+	ct, err := h.pc.Photo(r.Context(), ref, width, w)
+	if err != nil {
+		return
+	}
+	if ct != "" {
+		w.Header().Set("Content-Type", ct)
+	}
+}
+
+func (h *Handler) ReverseGeocode(w http.ResponseWriter, r *http.Request) {
+	lat, lng := parseLatLng(r)
+	if !h.pc.Enabled() || (lat == 0 && lng == 0) {
+		httpx.JSON(w, http.StatusOK, map[string]string{"label": ""})
+		return
+	}
+	label, err := h.pc.ReverseGeocode(r.Context(), lat, lng)
+	if err != nil {
+		httpx.JSON(w, http.StatusOK, map[string]string{"label": ""})
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]string{"label": label})
+}
+
+func parseLatLng(r *http.Request) (float64, float64) {
+	lat, _ := strconv.ParseFloat(r.URL.Query().Get("lat"), 64)
+	lng, _ := strconv.ParseFloat(r.URL.Query().Get("lng"), 64)
+	return lat, lng
+}
+
+// Lookup lets the ascent package build an ascent from an explore item (static or place).
+func Lookup(id string) (domain.ExploreItem, bool) {
+	for _, hob := range hobbyLaunchers {
+		if hob.ID == id {
+			return hob, true
+		}
+	}
+	return fallbackItem(id)
+}
