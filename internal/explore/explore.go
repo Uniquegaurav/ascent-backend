@@ -198,6 +198,15 @@ func (h *Handler) Photo(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// Debug surfaces Google's raw status/error for the configured key (temporary).
+func (h *Handler) Debug(w http.ResponseWriter, r *http.Request) {
+	lat, lng := parseLatLng(r)
+	if lat == 0 && lng == 0 {
+		lat, lng = 12.9716, 77.5946
+	}
+	httpx.JSON(w, http.StatusOK, h.pc.Diagnose(r.Context(), lat, lng))
+}
+
 func (h *Handler) ReverseGeocode(w http.ResponseWriter, r *http.Request) {
 	lat, lng := parseLatLng(r)
 	if !h.pc.Enabled() || (lat == 0 && lng == 0) {

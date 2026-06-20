@@ -40,6 +40,8 @@ func New(pool *pgxpool.Pool, cfg config.Config) http.Handler {
 	})
 	// Public: image proxy (Coil can't send the JWT).
 	r.Get("/place-photo", exploreH.Photo)
+	// Public temporary diagnostic for the Google key/API setup.
+	r.Get("/debug/places", exploreH.Debug)
 
 	r.Post("/auth/request-otp", authH.RequestOTP)
 	r.Post("/auth/verify-otp", authH.VerifyOTP)

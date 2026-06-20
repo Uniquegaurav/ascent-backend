@@ -26,6 +26,43 @@ func New(key string) *Client {
 
 func (c *Client) Enabled() bool { return c.key != "" }
 
+// Diag is a temporary diagnostic of the key/API setup (surfaces Google's status).
+type Diag struct {
+	KeySet      bool   `json:"keySet"`
+	KeyLen      int    `json:"keyLen"`
+	TextStatus  string `json:"textStatus"`
+	TextError   string `json:"textError"`
+	TextResults int    `json:"textResults"`
+	GeoStatus   string `json:"geoStatus"`
+	GeoError    string `json:"geoError"`
+}
+
+func (c *Client) Diagnose(ctx context.Context, lat, lng float64) Diag {
+	d := Diag{KeySet: c.key != "", KeyLen: len(c.key)}
+	if !c.Enabled() {
+		return d
+	}
+	tq := url.Values{}
+	tq.Set("query", "coffee")
+	tq.Set("location", fmt.Sprintf("%f,%f", lat, lng))
+	tq.Set("radius", "5000")
+	var ts searchResp
+	if err := c.get(ctx, "/place/textsearch/json", tq, &ts); err != nil {
+		d.TextError = err.Error()
+	} else {
+		d.TextStatus, d.TextError, d.TextResults = ts.Status, ts.ErrorMessage, len(ts.Results)
+	}
+	gq := url.Values{}
+	gq.Set("latlng", fmt.Sprintf("%f,%f", lat, lng))
+	var gr geocodeResp
+	if err := c.get(ctx, "/geocode/json", gq, &gr); err != nil {
+		d.GeoError = err.Error()
+	} else {
+		d.GeoStatus, d.GeoError = gr.Status, gr.ErrorMessage
+	}
+	return d
+}
+
 // ---- raw response shapes --------------------------------------------------
 
 type rawPlace struct {
