@@ -14,6 +14,7 @@ import (
 	"github.com/kumargaurav/summit-backend/internal/discovery"
 	"github.com/kumargaurav/summit-backend/internal/explore"
 	"github.com/kumargaurav/summit-backend/internal/friend"
+	"github.com/kumargaurav/summit-backend/internal/hobby"
 	"github.com/kumargaurav/summit-backend/internal/httpx"
 	"github.com/kumargaurav/summit-backend/internal/places"
 	"github.com/kumargaurav/summit-backend/internal/user"
@@ -33,6 +34,7 @@ func New(pool *pgxpool.Pool, cfg config.Config) http.Handler {
 	challengeH := challenge.NewHandler(challenge.NewRepo(pool))
 	discoveryH := discovery.NewHandler(discovery.NewService(pc))
 	catalogH := catalog.NewHandler(catalog.NewRepo(pool))
+	hobbyH := hobby.NewHandler(hobby.NewRepo(pool))
 
 	r := chi.NewRouter()
 	r.Use(httpx.Recover, httpx.RequestLogger, httpx.CORS)
@@ -58,6 +60,7 @@ func New(pool *pgxpool.Pool, cfg config.Config) http.Handler {
 		pr.Post("/users/name", userH.UpdateName)
 		pr.Get("/users/hobbies", userH.Hobbies)
 		pr.Put("/users/hobbies", userH.SetHobbies)
+		pr.Get("/hobbies/{id}/guide", hobbyH.Guide)
 		pr.Post("/users/avatar", userH.SetAvatar)
 
 		pr.Get("/catalog/interests", catalogH.Interests)
