@@ -8,6 +8,7 @@ import (
 
 	"github.com/kumargaurav/summit-backend/internal/ascent"
 	"github.com/kumargaurav/summit-backend/internal/auth"
+	"github.com/kumargaurav/summit-backend/internal/catalog"
 	"github.com/kumargaurav/summit-backend/internal/challenge"
 	"github.com/kumargaurav/summit-backend/internal/config"
 	"github.com/kumargaurav/summit-backend/internal/discovery"
@@ -21,7 +22,7 @@ import (
 func New(pool *pgxpool.Pool, cfg config.Config) http.Handler {
 	authRepo := auth.NewRepo(pool)
 	tokens := auth.NewTokenManager(cfg.JWTSecret, cfg.AccessTokenTTL)
-	authSvc := auth.NewService(authRepo, auth.LogSender{}, tokens, cfg.OTPDevCode, cfg.IsDev())
+	authSvc := auth.NewService(authRepo, auth.LogSender{}, tokens, cfg.OTPDevCode, cfg.IsDev(), cfg.RefreshTokenTTL)
 	authH := auth.NewHandler(authSvc)
 
 	pc := places.New(cfg.GooglePlacesKey)
@@ -31,6 +32,7 @@ func New(pool *pgxpool.Pool, cfg config.Config) http.Handler {
 	friendH := friend.NewHandler(friend.NewRepo(pool))
 	challengeH := challenge.NewHandler(challenge.NewRepo(pool))
 	discoveryH := discovery.NewHandler(discovery.NewService(pc))
+	catalogH := catalog.NewHandler(catalog.NewRepo(pool))
 
 	r := chi.NewRouter()
 	r.Use(httpx.Recover, httpx.RequestLogger, httpx.CORS)
@@ -45,6 +47,7 @@ func New(pool *pgxpool.Pool, cfg config.Config) http.Handler {
 
 	r.Post("/auth/request-otp", authH.RequestOTP)
 	r.Post("/auth/verify-otp", authH.VerifyOTP)
+	r.Post("/auth/refresh", authH.Refresh)
 
 	r.Group(func(pr chi.Router) {
 		pr.Use(httpx.RequireAuth(tokens.Validate))
@@ -52,6 +55,13 @@ func New(pool *pgxpool.Pool, cfg config.Config) http.Handler {
 		pr.Get("/users/me", userH.Me)
 		pr.Post("/users/onboarding", userH.Onboarding)
 		pr.Post("/users/name", userH.UpdateName)
+		pr.Get("/users/hobbies", userH.Hobbies)
+		pr.Put("/users/hobbies", userH.SetHobbies)
+
+		pr.Get("/catalog/interests", catalogH.Interests)
+		pr.Get("/catalog/cities", catalogH.Cities)
+		pr.Get("/catalog/searches", catalogH.PopularSearches)
+		pr.Get("/catalog/categories", catalogH.Categories)
 
 		pr.Get("/explore", exploreH.Feed)
 		pr.Get("/explore/search", exploreH.Search)

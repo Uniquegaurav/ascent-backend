@@ -79,11 +79,126 @@ func (r *Repo) CompleteOnboarding(ctx context.Context, userID, name string, inte
 	return r.Get(ctx, userID)
 }
 
+// GetHobbies returns the user's customised home hobbies. Falls back to their
+// onboarding interests, then to the first few catalog interests, so the home is
+// never empty for a new user.
+func (r *Repo) GetHobbies(ctx context.Context, userID string) (domain.HobbyPrefs, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT interest_id, theme FROM user_hobbies WHERE user_id = $1 ORDER BY position`, userID)
+	if err != nil {
+		return domain.HobbyPrefs{}, err
+	}
+	defer rows.Close()
+	ids := []string{}
+	overrides := map[string]string{}
+	for rows.Next() {
+		var id string
+		var theme *string
+		if err := rows.Scan(&id, &theme); err != nil {
+			return domain.HobbyPrefs{}, err
+		}
+		ids = append(ids, id)
+		if theme != nil && *theme != "" {
+			overrides[id] = *theme
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return domain.HobbyPrefs{}, err
+	}
+	if len(ids) == 0 {
+		ids, err = r.defaultHobbyIDs(ctx, userID)
+		if err != nil {
+			return domain.HobbyPrefs{}, err
+		}
+	}
+	return domain.HobbyPrefs{HobbyIDs: ids, ThemeOverrides: overrides}, nil
+}
+
+func (r *Repo) defaultHobbyIDs(ctx context.Context, userID string) ([]string, error) {
+	ids, err := r.interestIDs(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	if len(ids) > 0 {
+		return ids, nil
+	}
+	rows, err := r.pool.Query(ctx, `SELECT id FROM interests ORDER BY label LIMIT 5`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+// SetHobbies replaces the user's home hobbies (ordered) and theme overrides.
+func (r *Repo) SetHobbies(ctx context.Context, userID string, prefs domain.HobbyPrefs) (domain.HobbyPrefs, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return domain.HobbyPrefs{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, `DELETE FROM user_hobbies WHERE user_id = $1`, userID); err != nil {
+		return domain.HobbyPrefs{}, err
+	}
+	for pos, id := range prefs.HobbyIDs {
+		var theme *string
+		if t, ok := prefs.ThemeOverrides[id]; ok && t != "" {
+			tv := t
+			theme = &tv
+		}
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO user_hobbies (user_id, interest_id, position, theme) VALUES ($1, $2, $3, $4)
+			 ON CONFLICT (user_id, interest_id) DO UPDATE SET position = EXCLUDED.position, theme = EXCLUDED.theme`,
+			userID, id, pos, theme); err != nil {
+			return domain.HobbyPrefs{}, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return domain.HobbyPrefs{}, err
+	}
+	return r.GetHobbies(ctx, userID)
+}
+
 // ---- HTTP -----------------------------------------------------------------
 
 type Handler struct{ repo *Repo }
 
 func NewHandler(repo *Repo) *Handler { return &Handler{repo: repo} }
+
+func (h *Handler) Hobbies(w http.ResponseWriter, r *http.Request) {
+	prefs, err := h.repo.GetHobbies(r.Context(), httpx.UserID(r))
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, "could not load hobbies")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, prefs)
+}
+
+func (h *Handler) SetHobbies(w http.ResponseWriter, r *http.Request) {
+	var req domain.HobbyPrefs
+	if err := httpx.Decode(r, &req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, "bad request")
+		return
+	}
+	if req.ThemeOverrides == nil {
+		req.ThemeOverrides = map[string]string{}
+	}
+	prefs, err := h.repo.SetHobbies(r.Context(), httpx.UserID(r), req)
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, "could not save hobbies")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, prefs)
+}
 
 func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 	u, err := h.repo.Get(r.Context(), httpx.UserID(r))

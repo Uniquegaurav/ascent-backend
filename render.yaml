@@ -20,5 +20,10 @@ services:
           property: connectionString
       - key: JWT_SECRET
         generateValue: true
+      # Silent dev backdoor OTP (no UI hint). Real per-phone codes also work.
       - key: OTP_DEV_CODE
-        value: "000000"
+        value: "111111"
+      - key: ACCESS_TOKEN_TTL
+        value: "1h"
+      - key: REFRESH_TOKEN_TTL
+        value: "2160h"

@@ -71,6 +71,21 @@ func take(items []domain.ExploreItem, n int) []domain.ExploreItem {
 	return items
 }
 
+// decorate fills the server-derived summitCategory on each item.
+func decorate(items []domain.ExploreItem) []domain.ExploreItem {
+	for i := range items {
+		items[i] = items[i].WithSummitCategory()
+	}
+	return items
+}
+
+func decorateFeed(f domain.ExploreFeed) domain.ExploreFeed {
+	for i := range f.Sections {
+		f.Sections[i].Items = decorate(f.Sections[i].Items)
+	}
+	return f
+}
+
 func (h *Handler) searchItems(ctx context.Context, query, category, kind string, lat, lng float64) []domain.ExploreItem {
 	res, err := h.pc.TextSearch(ctx, query, lat, lng)
 	if err != nil {
@@ -100,7 +115,7 @@ func img(id string) string {
 func (h *Handler) Feed(w http.ResponseWriter, r *http.Request) {
 	lat, lng := parseLatLng(r)
 	if !h.pc.Enabled() || (lat == 0 && lng == 0) {
-		httpx.JSON(w, http.StatusOK, fallbackFeed())
+		httpx.JSON(w, http.StatusOK, decorateFeed(fallbackFeed()))
 		return
 	}
 	ctx := r.Context()
@@ -110,7 +125,7 @@ func (h *Handler) Feed(w http.ResponseWriter, r *http.Request) {
 		{ID: "hobbies", Title: "Start a new hobby", Layout: "GRID", Items: hobbyLaunchers},
 		{ID: "workshops", Title: "Workshops near you", Layout: "CARDS", Items: take(h.searchItems(ctx, "workshop class", "learning", "EVENT", lat, lng), 6)},
 	}
-	httpx.JSON(w, http.StatusOK, domain.ExploreFeed{Sections: sections})
+	httpx.JSON(w, http.StatusOK, decorateFeed(domain.ExploreFeed{Sections: sections}))
 }
 
 func (h *Handler) Search(w http.ResponseWriter, r *http.Request) {
@@ -121,10 +136,10 @@ func (h *Handler) Search(w http.ResponseWriter, r *http.Request) {
 	}
 	lat, lng := parseLatLng(r)
 	if !h.pc.Enabled() {
-		httpx.JSON(w, http.StatusOK, map[string]any{"items": fallbackSearch(q)})
+		httpx.JSON(w, http.StatusOK, map[string]any{"items": decorate(fallbackSearch(q))})
 		return
 	}
-	httpx.JSON(w, http.StatusOK, map[string]any{"items": h.searchItems(r.Context(), q, "explore", "PLACE", lat, lng)})
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": decorate(h.searchItems(r.Context(), q, "explore", "PLACE", lat, lng))})
 }
 
 func (h *Handler) Detail(w http.ResponseWriter, r *http.Request) {
@@ -132,13 +147,13 @@ func (h *Handler) Detail(w http.ResponseWriter, r *http.Request) {
 	// Static hobby launcher → return as-is (no reviews).
 	for _, hob := range hobbyLaunchers {
 		if hob.ID == id {
-			httpx.JSON(w, http.StatusOK, domain.ExploreDetail{Item: hob})
+			httpx.JSON(w, http.StatusOK, domain.ExploreDetail{Item: hob.WithSummitCategory()})
 			return
 		}
 	}
 	if !h.pc.Enabled() {
 		if it, ok := fallbackItem(id); ok {
-			httpx.JSON(w, http.StatusOK, domain.ExploreDetail{Item: it})
+			httpx.JSON(w, http.StatusOK, domain.ExploreDetail{Item: it.WithSummitCategory()})
 			return
 		}
 		httpx.Error(w, http.StatusNotFound, "not found")
@@ -173,7 +188,7 @@ func (h *Handler) Detail(w http.ResponseWriter, r *http.Request) {
 		Theme: themeForTypes(d.Types), Rating: d.Rating, RatingsTotal: d.RatingsTotal,
 	}
 	httpx.JSON(w, http.StatusOK, domain.ExploreDetail{
-		Item: item, Photos: photos, Reviews: reviews,
+		Item: item.WithSummitCategory(), Photos: photos, Reviews: reviews,
 		Address: d.Address, Phone: d.Phone, Website: d.Website, Hours: d.Hours,
 	})
 }

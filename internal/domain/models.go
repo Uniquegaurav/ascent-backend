@@ -104,7 +104,14 @@ type ExploreItem struct {
 	Rating       float64 `json:"rating"`
 	RatingsTotal int     `json:"ratingsTotal"`
 	PlaceID      string  `json:"placeId"`
-	SearchQuery  string  `json:"searchQuery"` // for HOBBY launchers
+	SearchQuery  string  `json:"searchQuery"`    // for HOBBY launchers
+	SummitCategory string `json:"summitCategory"` // HOBBY | EXPLORE | SUMMIT | UNWIND (server-derived)
+}
+
+// WithSummitCategory fills SummitCategory from the item's category/kind.
+func (e ExploreItem) WithSummitCategory() ExploreItem {
+	e.SummitCategory = ClassifyCategory(e.Category, e.Kind)
+	return e
 }
 
 type ExploreReview struct {
@@ -136,16 +143,23 @@ type ExploreFeed struct {
 }
 
 type Ascent struct {
-	ID           string `json:"id"`
-	Title        string `json:"title"`
-	Category     string `json:"category"`
-	Theme        string `json:"theme"`
-	ImageURL     string `json:"imageUrl"`
-	Kind         string `json:"kind"`
-	LocationName string `json:"locationName"`
-	Status       string `json:"status"` // EXPLORING | ACTIVE | SUMMITED
-	LogCount     int    `json:"logCount"`
-	CreatedAtMs  int64  `json:"createdAtMs"`
+	ID             string `json:"id"`
+	Title          string `json:"title"`
+	Category       string `json:"category"`
+	Theme          string `json:"theme"`
+	ImageURL       string `json:"imageUrl"`
+	Kind           string `json:"kind"`
+	LocationName   string `json:"locationName"`
+	Status         string `json:"status"` // EXPLORING | ACTIVE | SUMMITED
+	LogCount       int    `json:"logCount"`
+	CreatedAtMs    int64  `json:"createdAtMs"`
+	SummitCategory string `json:"summitCategory"` // HOBBY | EXPLORE | SUMMIT | UNWIND (server-derived)
+}
+
+// WithSummitCategory fills SummitCategory from the ascent's category/kind.
+func (a Ascent) WithSummitCategory() Ascent {
+	a.SummitCategory = ClassifyCategory(a.Category, a.Kind)
+	return a
 }
 
 type Log struct {

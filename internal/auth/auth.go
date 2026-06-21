@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/kumargaurav/summit-backend/internal/domain"
@@ -101,6 +102,34 @@ func (r *Repo) ConsumeOTP(ctx context.Context, phone, hash string) (bool, error)
 	return tag.RowsAffected() > 0, nil
 }
 
+// SaveRefresh stores a hashed refresh token for a user.
+func (r *Repo) SaveRefresh(ctx context.Context, userID, hash string, expires time.Time) error {
+	_, err := r.pool.Exec(ctx,
+		`INSERT INTO refresh_tokens (user_id, token_hash, expires_at) VALUES ($1, $2, $3)`,
+		userID, hash, expires)
+	return err
+}
+
+// ConsumeRefresh validates a refresh token hash, revokes it (single-use rotation),
+// and returns the owning user id. Returns ok=false if missing/expired/already used.
+func (r *Repo) ConsumeRefresh(ctx context.Context, hash string) (userID string, ok bool, err error) {
+	err = r.pool.QueryRow(ctx, `
+		UPDATE refresh_tokens SET revoked = TRUE
+		WHERE id = (
+			SELECT id FROM refresh_tokens
+			WHERE token_hash = $1 AND revoked = FALSE AND expires_at > now()
+			LIMIT 1
+		)
+		RETURNING user_id`, hash).Scan(&userID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return userID, true, nil
+}
+
 func (r *Repo) UpsertUserByPhone(ctx context.Context, phone string) (domain.User, error) {
 	var u domain.User
 	err := r.pool.QueryRow(ctx, `
@@ -135,18 +164,47 @@ func (r *Repo) interestIDs(ctx context.Context, userID string) ([]string, error)
 // ---- Service --------------------------------------------------------------
 
 type Service struct {
-	repo    *Repo
-	sms     SMSSender
-	tokens  TokenManager
-	devCode string
-	dev     bool
+	repo       *Repo
+	sms        SMSSender
+	tokens     TokenManager
+	devCode    string
+	dev        bool
+	refreshTTL time.Duration
 }
 
-func NewService(repo *Repo, sms SMSSender, tokens TokenManager, devCode string, dev bool) *Service {
-	return &Service{repo: repo, sms: sms, tokens: tokens, devCode: devCode, dev: dev}
+func NewService(repo *Repo, sms SMSSender, tokens TokenManager, devCode string, dev bool, refreshTTL time.Duration) *Service {
+	return &Service{repo: repo, sms: sms, tokens: tokens, devCode: devCode, dev: dev, refreshTTL: refreshTTL}
 }
 
 func (s *Service) Tokens() TokenManager { return s.tokens }
+
+// issueTokens mints a short-lived access JWT and a stored, rotating refresh token.
+func (s *Service) issueTokens(ctx context.Context, userID string) (access, refresh string, err error) {
+	access, err = s.tokens.Issue(userID)
+	if err != nil {
+		return "", "", err
+	}
+	refresh, err = randomToken()
+	if err != nil {
+		return "", "", err
+	}
+	if err := s.repo.SaveRefresh(ctx, userID, hashToken(refresh), time.Now().Add(s.refreshTTL)); err != nil {
+		return "", "", err
+	}
+	return access, refresh, nil
+}
+
+// Refresh validates and rotates a refresh token, returning a fresh access+refresh pair.
+func (s *Service) Refresh(ctx context.Context, refreshToken string) (access, refresh string, err error) {
+	userID, ok, err := s.repo.ConsumeRefresh(ctx, hashToken(refreshToken))
+	if err != nil {
+		return "", "", err
+	}
+	if !ok {
+		return "", "", errInvalidRefresh
+	}
+	return s.issueTokens(ctx, userID)
+}
 
 func normalizePhone(p string) string { return strings.TrimSpace(p) }
 
@@ -170,31 +228,35 @@ func (s *Service) RequestOTP(ctx context.Context, phone string) error {
 	return s.sms.Send(ctx, phone, code)
 }
 
-func (s *Service) VerifyOTP(ctx context.Context, phone, code string) (string, domain.User, error) {
+func (s *Service) VerifyOTP(ctx context.Context, phone, code string) (access, refresh string, user domain.User, err error) {
 	phone = normalizePhone(phone)
+	// Silent dev backdoor code (no UI hint) alongside the real per-phone code.
 	ok := s.dev && code == s.devCode
 	if !ok {
-		found, err := s.repo.ConsumeOTP(ctx, phone, hashCode(phone, code))
-		if err != nil {
-			return "", domain.User{}, err
+		found, ferr := s.repo.ConsumeOTP(ctx, phone, hashCode(phone, code))
+		if ferr != nil {
+			return "", "", domain.User{}, ferr
 		}
 		ok = found
 	}
 	if !ok {
-		return "", domain.User{}, errInvalidCode
+		return "", "", domain.User{}, errInvalidCode
 	}
-	user, err := s.repo.UpsertUserByPhone(ctx, phone)
+	user, err = s.repo.UpsertUserByPhone(ctx, phone)
 	if err != nil {
-		return "", domain.User{}, err
+		return "", "", domain.User{}, err
 	}
-	token, err := s.tokens.Issue(user.ID)
+	access, refresh, err = s.issueTokens(ctx, user.ID)
 	if err != nil {
-		return "", domain.User{}, err
+		return "", "", domain.User{}, err
 	}
-	return token, user, nil
+	return access, refresh, user, nil
 }
 
-var errInvalidCode = errors.New("invalid or expired code")
+var (
+	errInvalidCode    = errors.New("invalid or expired code")
+	errInvalidRefresh = errors.New("invalid or expired refresh token")
+)
 
 func randomCode() (string, error) {
 	var b strings.Builder
@@ -206,6 +268,20 @@ func randomCode() (string, error) {
 		b.WriteString(n.String())
 	}
 	return b.String(), nil
+}
+
+// randomToken returns a 256-bit opaque token, hex-encoded.
+func randomToken() (string, error) {
+	buf := make([]byte, 32)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(buf), nil
+}
+
+func hashToken(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
 }
 
 // ---- HTTP -----------------------------------------------------------------
@@ -242,7 +318,7 @@ func (h *Handler) VerifyOTP(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "bad request")
 		return
 	}
-	token, user, err := h.svc.VerifyOTP(r.Context(), req.Phone, req.Code)
+	access, refresh, user, err := h.svc.VerifyOTP(r.Context(), req.Phone, req.Code)
 	if err != nil {
 		if errors.Is(err, errInvalidCode) {
 			httpx.Error(w, http.StatusUnauthorized, err.Error())
@@ -251,5 +327,27 @@ func (h *Handler) VerifyOTP(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusInternalServerError, "could not verify")
 		return
 	}
-	httpx.JSON(w, http.StatusOK, map[string]any{"token": token, "user": user})
+	httpx.JSON(w, http.StatusOK, map[string]any{"token": access, "refreshToken": refresh, "user": user})
+}
+
+type refreshReq struct {
+	RefreshToken string `json:"refreshToken"`
+}
+
+func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
+	var req refreshReq
+	if err := httpx.Decode(r, &req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, "bad request")
+		return
+	}
+	access, refresh, err := h.svc.Refresh(r.Context(), req.RefreshToken)
+	if err != nil {
+		if errors.Is(err, errInvalidRefresh) {
+			httpx.Error(w, http.StatusUnauthorized, err.Error())
+			return
+		}
+		httpx.Error(w, http.StatusInternalServerError, "could not refresh")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"token": access, "refreshToken": refresh})
 }

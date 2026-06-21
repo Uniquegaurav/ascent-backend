@@ -34,12 +34,13 @@ func loadDotEnv() {
 
 // Config holds runtime configuration sourced from the environment.
 type Config struct {
-	Env            string
-	Port           string
-	DatabaseURL    string
-	JWTSecret      string
-	AccessTokenTTL time.Duration
-	OTPDevCode     string
+	Env             string
+	Port            string
+	DatabaseURL     string
+	JWTSecret       string
+	AccessTokenTTL  time.Duration
+	RefreshTokenTTL time.Duration
+	OTPDevCode      string
 	GooglePlacesKey string
 }
 
@@ -50,8 +51,9 @@ func Load() Config {
 		Port:            getenv("PORT", "8080"),
 		DatabaseURL:     getenv("DATABASE_URL", "postgres://summit:summit@localhost:5432/summit?sslmode=disable"),
 		JWTSecret:       getenv("JWT_SECRET", "dev-secret-change-me-please-0000000000"),
-		AccessTokenTTL:  getdur("ACCESS_TOKEN_TTL", 720*time.Hour),
-		OTPDevCode:      getenv("OTP_DEV_CODE", "000000"),
+		AccessTokenTTL:  getdur("ACCESS_TOKEN_TTL", 1*time.Hour),
+		RefreshTokenTTL: getdur("REFRESH_TOKEN_TTL", 2160*time.Hour), // 90 days
+		OTPDevCode:      getenv("OTP_DEV_CODE", "111111"),
 		GooglePlacesKey: getenv("GOOGLE_PLACES_KEY", ""),
 	}
 }

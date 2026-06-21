@@ -83,7 +83,7 @@ func (r *Repo) Create(ctx context.Context, userID string, a domain.Ascent, sourc
 	a.ID = id
 	a.Status = "ACTIVE"
 	a.CreatedAtMs = createdAt.UnixMilli()
-	return a, nil
+	return a.WithSummitCategory(), nil
 }
 
 func (r *Repo) AddLog(ctx context.Context, userID, ascentID string, l domain.Log) (domain.Log, error) {
@@ -285,7 +285,7 @@ func scanAscentRow(row scannable) (domain.Ascent, error) {
 		a.LocationName = *locName
 	}
 	a.CreatedAtMs = createdAt.UnixMilli()
-	return a, nil
+	return a.WithSummitCategory(), nil
 }
 
 // ---- HTTP -----------------------------------------------------------------
