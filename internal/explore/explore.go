@@ -8,15 +8,52 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/kumargaurav/summit-backend/internal/domain"
 	"github.com/kumargaurav/summit-backend/internal/httpx"
 	"github.com/kumargaurav/summit-backend/internal/places"
 )
 
-type Handler struct{ pc *places.Client }
+type Handler struct {
+	pc   *places.Client
+	pool *pgxpool.Pool
+}
 
-func NewHandler(pc *places.Client) *Handler { return &Handler{pc: pc} }
+func NewHandler(pc *places.Client, pool *pgxpool.Pool) *Handler { return &Handler{pc: pc, pool: pool} }
+
+var defaultHobbyIDs = []string{"trekking", "running", "music"}
+
+// hobbyIDs returns the signed-in user's chosen home hobbies (then onboarding
+// interests, then sensible defaults) to personalize the Trending rows.
+func (h *Handler) hobbyIDs(r *http.Request) []string {
+	uid := httpx.UserID(r)
+	if h.pool == nil || uid == "" {
+		return defaultHobbyIDs
+	}
+	query := func(sql string) []string {
+		rows, err := h.pool.Query(r.Context(), sql, uid)
+		if err != nil {
+			return nil
+		}
+		defer rows.Close()
+		out := []string{}
+		for rows.Next() {
+			var id string
+			if rows.Scan(&id) == nil {
+				out = append(out, id)
+			}
+		}
+		return out
+	}
+	if ids := query(`SELECT interest_id FROM user_hobbies WHERE user_id = $1 ORDER BY position`); len(ids) > 0 {
+		return ids
+	}
+	if ids := query(`SELECT interest_id FROM user_interests WHERE user_id = $1`); len(ids) > 0 {
+		return ids
+	}
+	return defaultHobbyIDs
+}
 
 // Relative photo-proxy URL; the app prefixes the API base. Falls back to a stock
 // image when a place has no photo.
@@ -114,19 +151,63 @@ func img(id string) string {
 
 func (h *Handler) Feed(w http.ResponseWriter, r *http.Request) {
 	lat, lng := parseLatLng(r)
+	hobbies := h.hobbyIDs(r)
 	if !h.pc.Enabled() || (lat == 0 && lng == 0) {
-		httpx.JSON(w, http.StatusOK, decorateFeed(fallbackFeed()))
+		httpx.JSON(w, http.StatusOK, decorateFeed(fallbackFeed(hobbies)))
 		return
 	}
 	ctx := r.Context()
 	sections := []domain.ExploreSection{
 		{ID: "popular", Title: "Popular places near you", Layout: "CARDS", Items: take(h.searchItems(ctx, "top tourist attractions", "explore", "PLACE", lat, lng), 8)},
-		{ID: "treks", Title: "Trending treks", Layout: "CAROUSEL", Items: take(h.searchItems(ctx, "trekking trail hiking", "trekking", "TREK", lat, lng), 8)},
-		{ID: "workshops", Title: "Trending workshops", Layout: "CAROUSEL", Items: take(h.searchItems(ctx, "workshop class", "learning", "EVENT", lat, lng), 8)},
-		{ID: "hobbies", Title: "Start a new hobby", Layout: "GRID", Items: hobbyLaunchers},
-		{ID: "unwind", Title: "Unwind nearby", Layout: "UNWIND", Items: take(h.searchItems(ctx, "cafe park garden relax", "cafe", "PLACE", lat, lng), 8)},
+		{ID: "world", Title: "In the spotlight", Layout: "SPOTLIGHT", Items: take(h.searchItems(ctx, "iconic landmark scenic", "explore", "PLACE", lat, lng), 5)},
 	}
+	// Personalized Trending sub-rows from the user's hobbies (live Places search).
+	seen := map[string]bool{}
+	for i, id := range hobbies {
+		if i >= 4 || id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		items := take(h.searchItems(ctx, keywordForHobby(id), id, "PLACE", lat, lng), 8)
+		if len(items) > 0 {
+			sections = append(sections, domain.ExploreSection{ID: "trending_" + id, Title: "Trending " + capWord(id), Layout: "CAROUSEL", Items: items})
+		}
+	}
+	sections = append(sections,
+		domain.ExploreSection{ID: "unwind", Title: "Unwind nearby", Layout: "UNWIND", Items: take(h.searchItems(ctx, "cafe park garden relax", "cafe", "PLACE", lat, lng), 8)},
+	)
 	httpx.JSON(w, http.StatusOK, decorateFeed(domain.ExploreFeed{Sections: sections}))
+}
+
+func keywordForHobby(id string) string {
+	switch id {
+	case "running":
+		return "running track park"
+	case "fitness":
+		return "gym fitness studio"
+	case "dance":
+		return "dance studio classes"
+	case "music":
+		return "live music venue school"
+	case "art":
+		return "art studio gallery workshop"
+	case "photography":
+		return "scenic photography spot"
+	case "reading":
+		return "bookstore library cafe"
+	case "gaming":
+		return "gaming arcade cafe"
+	case "football":
+		return "football turf ground"
+	case "trekking":
+		return "trekking trail hiking"
+	case "learning":
+		return "workshop class learning"
+	case "travel":
+		return "tourist destination"
+	default:
+		return id
+	}
 }
 
 func (h *Handler) Search(w http.ResponseWriter, r *http.Request) {

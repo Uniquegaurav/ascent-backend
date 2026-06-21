@@ -27,7 +27,7 @@ func New(pool *pgxpool.Pool, cfg config.Config) http.Handler {
 
 	pc := places.New(cfg.GooglePlacesKey)
 	userH := user.NewHandler(user.NewRepo(pool))
-	exploreH := explore.NewHandler(pc)
+	exploreH := explore.NewHandler(pc, pool)
 	ascentH := ascent.NewHandler(ascent.NewRepo(pool))
 	friendH := friend.NewHandler(friend.NewRepo(pool))
 	challengeH := challenge.NewHandler(challenge.NewRepo(pool))
@@ -68,6 +68,7 @@ func New(pool *pgxpool.Pool, cfg config.Config) http.Handler {
 		pr.Get("/explore", exploreH.Feed)
 		pr.Get("/explore/search", exploreH.Search)
 		pr.Get("/explore/{id}", exploreH.Detail)
+		pr.Get("/treks", exploreH.Treks)
 		pr.Get("/geocode/reverse", exploreH.ReverseGeocode)
 
 		pr.Get("/ascents", ascentH.List)

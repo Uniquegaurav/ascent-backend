@@ -91,22 +91,22 @@ type Challenge struct {
 // ---- Explore + Ascents (the new model) -----------------------------------
 
 type ExploreItem struct {
-	ID           string  `json:"id"`
-	Title        string  `json:"title"`
-	Subtitle     string  `json:"subtitle"`
-	Category     string  `json:"category"`
-	Kind         string  `json:"kind"` // TREK | PLACE | EVENT | HOBBY | DESTINATION
-	Country      string  `json:"country"`
-	LocationName string  `json:"locationName"`
-	ImageURL     string  `json:"imageUrl"`
-	Theme        string  `json:"theme"`
-	Description  string  `json:"description"`
-	Popularity   int     `json:"popularity"`
-	Rating       float64 `json:"rating"`
-	RatingsTotal int     `json:"ratingsTotal"`
-	PlaceID      string  `json:"placeId"`
-	SearchQuery  string  `json:"searchQuery"`    // for HOBBY launchers
-	SummitCategory string `json:"summitCategory"` // HOBBY | EXPLORE | SUMMIT | UNWIND (server-derived)
+	ID             string  `json:"id"`
+	Title          string  `json:"title"`
+	Subtitle       string  `json:"subtitle"`
+	Category       string  `json:"category"`
+	Kind           string  `json:"kind"` // TREK | PLACE | EVENT | HOBBY | DESTINATION
+	Country        string  `json:"country"`
+	LocationName   string  `json:"locationName"`
+	ImageURL       string  `json:"imageUrl"`
+	Theme          string  `json:"theme"`
+	Description    string  `json:"description"`
+	Popularity     int     `json:"popularity"`
+	Rating         float64 `json:"rating"`
+	RatingsTotal   int     `json:"ratingsTotal"`
+	PlaceID        string  `json:"placeId"`
+	SearchQuery    string  `json:"searchQuery"`    // for HOBBY launchers
+	SummitCategory string  `json:"summitCategory"` // HOBBY | EXPLORE | SUMMIT | UNWIND (server-derived)
 }
 
 // WithSummitCategory fills SummitCategory from the item's category/kind.
@@ -181,15 +181,15 @@ type AscentDetail struct {
 }
 
 type FeedItem struct {
-	ID              string  `json:"id"`
-	AuthorName      string  `json:"authorName"`
-	AuthorHue       float64 `json:"authorHue"`
-	IsSelf          bool    `json:"isSelf"`
-	Title           string  `json:"title"`
-	Description     string  `json:"description"`
-	Category        string  `json:"category"`
-	Location        *string `json:"location"`
-	TimestampEpochMs int64  `json:"timestampEpochMs"`
-	Reactions       int     `json:"reactions"`
-	ReactedByMe     bool    `json:"reactedByMe"`
+	ID               string  `json:"id"`
+	AuthorName       string  `json:"authorName"`
+	AuthorHue        float64 `json:"authorHue"`
+	IsSelf           bool    `json:"isSelf"`
+	Title            string  `json:"title"`
+	Description      string  `json:"description"`
+	Category         string  `json:"category"`
+	Location         *string `json:"location"`
+	TimestampEpochMs int64   `json:"timestampEpochMs"`
+	Reactions        int     `json:"reactions"`
+	ReactedByMe      bool    `json:"reactedByMe"`
 }

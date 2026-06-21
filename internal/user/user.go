@@ -273,10 +273,7 @@ func (h *Handler) Onboarding(w http.ResponseWriter, r *http.Request) {
 	if name == "" {
 		name = "Climber"
 	}
-	if len(req.InterestIDs) == 0 {
-		httpx.Error(w, http.StatusBadRequest, "pick at least one peak")
-		return
-	}
+	// Name-only signup is allowed; interests are optional and customised later on Home.
 	u, err := h.repo.CompleteOnboarding(r.Context(), httpx.UserID(r), name, req.InterestIDs)
 	if err != nil {
 		httpx.Error(w, http.StatusInternalServerError, "could not save")
