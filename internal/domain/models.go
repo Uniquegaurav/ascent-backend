@@ -122,6 +122,12 @@ type ExploreReview struct {
 	When   string  `json:"when"`
 }
 
+// Fact is a labelled key fact (e.g. "Max altitude" → "5,364 m") shown on a detail screen.
+type Fact struct {
+	Label string `json:"label"`
+	Value string `json:"value"`
+}
+
 type ExploreDetail struct {
 	Item    ExploreItem     `json:"item"`
 	Photos  []string        `json:"photos"`
@@ -130,6 +136,10 @@ type ExploreDetail struct {
 	Phone   string          `json:"phone"`
 	Website string          `json:"website"`
 	Hours   []string        `json:"hours"`
+	// Facts is structured key info (treks: difficulty/altitude/season/…).
+	Facts []Fact `json:"facts"`
+	// InfoURL links out to an authoritative guide (IndiaHikes / AllTrails / official).
+	InfoURL string `json:"infoUrl"`
 }
 
 type ExploreSection struct {

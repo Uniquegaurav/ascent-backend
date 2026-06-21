@@ -16,6 +16,7 @@ import (
 	"github.com/kumargaurav/summit-backend/internal/friend"
 	"github.com/kumargaurav/summit-backend/internal/hobby"
 	"github.com/kumargaurav/summit-backend/internal/httpx"
+	"github.com/kumargaurav/summit-backend/internal/integration"
 	"github.com/kumargaurav/summit-backend/internal/places"
 	"github.com/kumargaurav/summit-backend/internal/user"
 )
@@ -35,6 +36,7 @@ func New(pool *pgxpool.Pool, cfg config.Config) http.Handler {
 	discoveryH := discovery.NewHandler(discovery.NewService(pc))
 	catalogH := catalog.NewHandler(catalog.NewRepo(pool))
 	hobbyH := hobby.NewHandler(hobby.NewRepo(pool))
+	integrationH := integration.NewHandler(integration.NewRepo(pool))
 
 	r := chi.NewRouter()
 	r.Use(httpx.Recover, httpx.RequestLogger, httpx.CORS)
@@ -61,6 +63,10 @@ func New(pool *pgxpool.Pool, cfg config.Config) http.Handler {
 		pr.Get("/users/hobbies", userH.Hobbies)
 		pr.Put("/users/hobbies", userH.SetHobbies)
 		pr.Get("/hobbies/{id}/guide", hobbyH.Guide)
+
+		pr.Get("/integrations", integrationH.List)
+		pr.Post("/integrations/{id}/connect", integrationH.Connect)
+		pr.Post("/integrations/{id}/disconnect", integrationH.Disconnect)
 		pr.Post("/users/avatar", userH.SetAvatar)
 
 		pr.Get("/catalog/interests", catalogH.Interests)

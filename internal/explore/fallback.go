@@ -25,6 +25,12 @@ var fallbackCatalog = []domain.ExploreItem{
 	{ID: "ex_thirdwave", Title: "Third Wave Coffee", Subtitle: "Specialty roasters", Category: "cafe", Kind: "PLACE", Country: "India", LocationName: "HSR Layout", Theme: "FOREST", Rating: 4.3, RatingsTotal: 4200, ImageURL: img("1495474472287-4d71bcdd2085"), Description: "A calm corner for pour-overs and work."},
 	{ID: "ex_cubbon", Title: "Cubbon Park", Subtitle: "Green city lungs", Category: "park", Kind: "PLACE", Country: "India", LocationName: "Central Bengaluru", Theme: "FOREST", Rating: 4.6, RatingsTotal: 31000, ImageURL: img("1441974231531-c6227db76b6e"), Description: "A sprawling park for morning walks."},
 	{ID: "ex_lalbagh", Title: "Lalbagh Garden", Subtitle: "Botanical retreat", Category: "garden", Kind: "PLACE", Country: "India", LocationName: "Lalbagh", Theme: "FOREST", Rating: 4.6, RatingsTotal: 28000, ImageURL: img("1416879595882-3373a0480b5b"), Description: "A historic botanical garden and glasshouse."},
+	{ID: "ex_nandi", Title: "Nandi Hills Sunrise", Subtitle: "Above the clouds", Category: "park", Kind: "PLACE", Country: "India", LocationName: "Chikkaballapur", Theme: "OCEAN", Rating: 4.5, RatingsTotal: 41000, ImageURL: img("1500530855697-b586d89ba3ee"), Description: "A pre-dawn drive for a sea-of-clouds sunrise."},
+	{ID: "ex_ulsoor", Title: "Ulsoor Lake", Subtitle: "Boating & promenade", Category: "park", Kind: "PLACE", Country: "India", LocationName: "Ulsoor", Theme: "OCEAN", Rating: 4.3, RatingsTotal: 19000, ImageURL: img("1506905925346-21bda4d32df4"), Description: "An old lake with pedal boats and a quiet walking path."},
+	{ID: "ex_cornerhouse", Title: "Corner House Ice Cream", Subtitle: "The legendary Death by Chocolate", Category: "dessert", Kind: "PLACE", Country: "India", LocationName: "Residency Rd", Theme: "EMBER", Rating: 4.6, RatingsTotal: 22000, ImageURL: img("1556910103-1c02745aae4d"), Description: "A Bengaluru institution for sundaes."},
+	{ID: "ex_skyye", Title: "Skyye Lounge", Subtitle: "Rooftop sundowners", Category: "lounge", Kind: "PLACE", Country: "India", LocationName: "UB City", Theme: "EMBER", Rating: 4.4, RatingsTotal: 8700, ImageURL: img("1517248135467-4c7edcad34c4"), Description: "Open-air rooftop bar with skyline views."},
+	{ID: "ex_sankey", Title: "Sankey Tank", Subtitle: "Lakeside walk", Category: "park", Kind: "PLACE", Country: "India", LocationName: "Malleshwaram", Theme: "FOREST", Rating: 4.5, RatingsTotal: 16000, ImageURL: img("1416879595882-3373a0480b5b"), Description: "A serene lake for sunset strolls and birdwatching."},
+	{ID: "ex_blossom", Title: "Blossom Book House", Subtitle: "Browse for hours", Category: "lounge", Kind: "PLACE", Country: "India", LocationName: "Church St", Theme: "COSMIC", Rating: 4.8, RatingsTotal: 7400, ImageURL: img("1512820790803-83ca734da794"), Description: "A beloved multi-storey bookstore to get lost in."},
 }
 
 func pickItems(ids ...string) []domain.ExploreItem {
@@ -60,7 +66,7 @@ func fallbackFeed(hobbyIDs []string) domain.ExploreFeed {
 		sections = append(sections, trendingSection("trekking", "treks"))
 	}
 	sections = append(sections,
-		domain.ExploreSection{ID: "unwind", Title: "Unwind nearby", Layout: "UNWIND", Items: pickItems("ex_thirdwave", "ex_cubbon", "ex_lalbagh", "ex_mtr", "ex_toit")},
+		domain.ExploreSection{ID: "unwind", Title: "Unwind nearby", Layout: "UNWIND", Items: pickItems("ex_nandi", "ex_cubbon", "ex_cornerhouse", "ex_ulsoor", "ex_skyye", "ex_blossom", "ex_lalbagh", "ex_sankey", "ex_thirdwave")},
 	)
 	return domain.ExploreFeed{Sections: sections}
 }

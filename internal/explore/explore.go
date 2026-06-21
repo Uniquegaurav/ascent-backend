@@ -174,7 +174,7 @@ func (h *Handler) Feed(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	sections = append(sections,
-		domain.ExploreSection{ID: "unwind", Title: "Unwind nearby", Layout: "UNWIND", Items: take(h.searchItems(ctx, "cafe park garden relax", "cafe", "PLACE", lat, lng), 8)},
+		domain.ExploreSection{ID: "unwind", Title: "Unwind nearby", Layout: "UNWIND", Items: take(h.searchItems(ctx, "park lake garden viewpoint dessert rooftop lounge bookstore", "cafe", "PLACE", lat, lng), 8)},
 	)
 	httpx.JSON(w, http.StatusOK, decorateFeed(domain.ExploreFeed{Sections: sections}))
 }
@@ -232,6 +232,21 @@ func (h *Handler) Detail(w http.ResponseWriter, r *http.Request) {
 			httpx.JSON(w, http.StatusOK, domain.ExploreDetail{Item: hob.WithSummitCategory()})
 			return
 		}
+	}
+	// Curated treks are not Google places — resolve them directly so the card opens,
+	// with factual detail + a link to the authoritative guide.
+	if t, ok := trekByID(id); ok {
+		m := trekMetas[id]
+		if m.desc != "" {
+			t.Description = m.desc
+		}
+		httpx.JSON(w, http.StatusOK, domain.ExploreDetail{
+			Item:    t.WithSummitCategory(),
+			Photos:  []string{t.ImageURL},
+			Facts:   m.facts,
+			InfoURL: trekInfoURL(t),
+		})
+		return
 	}
 	if !h.pc.Enabled() {
 		if it, ok := fallbackItem(id); ok {
@@ -330,6 +345,9 @@ func Lookup(id string) (domain.ExploreItem, bool) {
 		if hob.ID == id {
 			return hob, true
 		}
+	}
+	if t, ok := trekByID(id); ok {
+		return t, true
 	}
 	return fallbackItem(id)
 }
