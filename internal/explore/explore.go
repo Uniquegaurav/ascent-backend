@@ -120,10 +120,11 @@ func (h *Handler) Feed(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := r.Context()
 	sections := []domain.ExploreSection{
-		{ID: "popular", Title: "Popular near you", Layout: "CARDS", Items: take(h.searchItems(ctx, "top tourist attractions", "explore", "PLACE", lat, lng), 6)},
+		{ID: "popular", Title: "Popular places near you", Layout: "CARDS", Items: take(h.searchItems(ctx, "top tourist attractions", "explore", "PLACE", lat, lng), 8)},
 		{ID: "treks", Title: "Trending treks", Layout: "CAROUSEL", Items: take(h.searchItems(ctx, "trekking trail hiking", "trekking", "TREK", lat, lng), 8)},
+		{ID: "workshops", Title: "Trending workshops", Layout: "CAROUSEL", Items: take(h.searchItems(ctx, "workshop class", "learning", "EVENT", lat, lng), 8)},
 		{ID: "hobbies", Title: "Start a new hobby", Layout: "GRID", Items: hobbyLaunchers},
-		{ID: "workshops", Title: "Workshops near you", Layout: "CARDS", Items: take(h.searchItems(ctx, "workshop class", "learning", "EVENT", lat, lng), 6)},
+		{ID: "unwind", Title: "Unwind nearby", Layout: "UNWIND", Items: take(h.searchItems(ctx, "cafe park garden relax", "cafe", "PLACE", lat, lng), 8)},
 	}
 	httpx.JSON(w, http.StatusOK, decorateFeed(domain.ExploreFeed{Sections: sections}))
 }

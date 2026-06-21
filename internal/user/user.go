@@ -2,10 +2,12 @@ package user
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"net/http"
 	"strings"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -26,7 +28,27 @@ func (r *Repo) Get(ctx context.Context, userID string) (domain.User, error) {
 		return domain.User{}, err
 	}
 	u.InterestIDs, err = r.interestIDs(ctx, userID)
-	return u, err
+	if err != nil {
+		return domain.User{}, err
+	}
+	var hasAvatar bool
+	if err := r.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM avatars WHERE user_id = $1)`, userID).Scan(&hasAvatar); err == nil && hasAvatar {
+		u.AvatarURL = "/avatars/" + userID
+	}
+	return u, nil
+}
+
+func (r *Repo) SaveAvatar(ctx context.Context, userID string, data []byte, contentType string) error {
+	_, err := r.pool.Exec(ctx, `
+		INSERT INTO avatars (user_id, data, content_type, updated_at) VALUES ($1, $2, $3, now())
+		ON CONFLICT (user_id) DO UPDATE SET data = EXCLUDED.data, content_type = EXCLUDED.content_type, updated_at = now()`,
+		userID, data, contentType)
+	return err
+}
+
+func (r *Repo) LoadAvatar(ctx context.Context, userID string) (data []byte, contentType string, err error) {
+	err = r.pool.QueryRow(ctx, `SELECT data, content_type FROM avatars WHERE user_id = $1`, userID).Scan(&data, &contentType)
+	return data, contentType, err
 }
 
 func (r *Repo) interestIDs(ctx context.Context, userID string) ([]string, error) {
@@ -261,4 +283,56 @@ func (h *Handler) Onboarding(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusOK, u)
+}
+
+type avatarReq struct {
+	Data        string `json:"data"`        // base64-encoded image bytes
+	ContentType string `json:"contentType"` // e.g. "image/jpeg"
+}
+
+// SetAvatar accepts a base64 image, stores it, and returns the updated user.
+func (h *Handler) SetAvatar(w http.ResponseWriter, r *http.Request) {
+	var req avatarReq
+	if err := httpx.Decode(r, &req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, "bad request")
+		return
+	}
+	raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(req.Data))
+	if err != nil || len(raw) == 0 {
+		httpx.Error(w, http.StatusBadRequest, "invalid image data")
+		return
+	}
+	if len(raw) > 5*1024*1024 {
+		httpx.Error(w, http.StatusRequestEntityTooLarge, "image too large (max 5MB)")
+		return
+	}
+	ct := req.ContentType
+	if ct == "" {
+		ct = "image/jpeg"
+	}
+	uid := httpx.UserID(r)
+	if err := h.repo.SaveAvatar(r.Context(), uid, raw, ct); err != nil {
+		httpx.Error(w, http.StatusInternalServerError, "could not save avatar")
+		return
+	}
+	u, err := h.repo.Get(r.Context(), uid)
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, "could not load user")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, u)
+}
+
+// ServeAvatar streams a user's stored avatar (public — image tags can't send a JWT).
+func (h *Handler) ServeAvatar(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	data, ct, err := h.repo.LoadAvatar(r.Context(), id)
+	if err != nil {
+		httpx.Error(w, http.StatusNotFound, "no avatar")
+		return
+	}
+	w.Header().Set("Content-Type", ct)
+	w.Header().Set("Cache-Control", "no-cache")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
 }

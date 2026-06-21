@@ -2,6 +2,7 @@ package ascent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -59,7 +60,7 @@ func (r *Repo) FindBySource(ctx context.Context, userID, sourceID string) (domai
 // AllLogs returns every log the user has written, across all ascents (central feed).
 func (r *Repo) AllLogs(ctx context.Context, userID string) ([]domain.Log, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT id, ascent_id, title, note, mood_score, location_name, lat, lng, image_urls, created_at
+		SELECT id, ascent_id, title, note, mood_score, location_name, lat, lng, image_urls, metrics, created_at
 		FROM logs WHERE user_id = $1 ORDER BY created_at DESC LIMIT 100`, userID)
 	if err != nil {
 		return nil, err
@@ -105,12 +106,19 @@ func (r *Repo) AddLog(ctx context.Context, userID, ascentID string, l domain.Log
 	if images == nil {
 		images = []string{}
 	}
+	if l.Metrics == nil {
+		l.Metrics = map[string]string{}
+	}
+	metricsJSON, err := json.Marshal(l.Metrics)
+	if err != nil {
+		return domain.Log{}, err
+	}
 	var id string
 	var createdAt time.Time
-	err := r.pool.QueryRow(ctx, `
-		INSERT INTO logs (ascent_id, user_id, title, note, mood_score, location_name, lat, lng, image_urls)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id, created_at`,
-		ascentID, userID, l.Title, l.Note, l.MoodScore, locName, lat, lng, images).Scan(&id, &createdAt)
+	err = r.pool.QueryRow(ctx, `
+		INSERT INTO logs (ascent_id, user_id, title, note, mood_score, location_name, lat, lng, image_urls, metrics)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id, created_at`,
+		ascentID, userID, l.Title, l.Note, l.MoodScore, locName, lat, lng, images, metricsJSON).Scan(&id, &createdAt)
 	if err != nil {
 		return domain.Log{}, err
 	}
@@ -123,7 +131,7 @@ func (r *Repo) AddLog(ctx context.Context, userID, ascentID string, l domain.Log
 
 func (r *Repo) Logs(ctx context.Context, ascentID string) ([]domain.Log, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT id, ascent_id, title, note, mood_score, location_name, lat, lng, image_urls, created_at
+		SELECT id, ascent_id, title, note, mood_score, location_name, lat, lng, image_urls, metrics, created_at
 		FROM logs WHERE ascent_id = $1 ORDER BY created_at DESC`, ascentID)
 	if err != nil {
 		return nil, err
@@ -135,13 +143,18 @@ func (r *Repo) Logs(ctx context.Context, ascentID string) ([]domain.Log, error) 
 		var images []string
 		var locName *string
 		var lat, lng *float64
+		var metrics []byte
 		var createdAt time.Time
-		if err := rows.Scan(&l.ID, &l.AscentID, &l.Title, &l.Note, &l.MoodScore, &locName, &lat, &lng, &images, &createdAt); err != nil {
+		if err := rows.Scan(&l.ID, &l.AscentID, &l.Title, &l.Note, &l.MoodScore, &locName, &lat, &lng, &images, &metrics, &createdAt); err != nil {
 			return nil, err
 		}
 		l.ImageURLs = images
 		if l.ImageURLs == nil {
 			l.ImageURLs = []string{}
+		}
+		l.Metrics = map[string]string{}
+		if len(metrics) > 0 {
+			_ = json.Unmarshal(metrics, &l.Metrics)
 		}
 		if locName != nil && lat != nil && lng != nil {
 			l.Location = &domain.GeoLocation{Name: *locName, Lat: *lat, Lng: *lng}
@@ -197,7 +210,7 @@ func (r *Repo) Invite(ctx context.Context, fromUser, toUser, ascentID string) er
 
 func (r *Repo) FriendLogs(ctx context.Context, friendID string) ([]domain.Log, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT id, ascent_id, title, note, mood_score, location_name, lat, lng, image_urls, created_at
+		SELECT id, ascent_id, title, note, mood_score, location_name, lat, lng, image_urls, metrics, created_at
 		FROM logs WHERE user_id = $1 ORDER BY created_at DESC LIMIT 20`, friendID)
 	if err != nil {
 		return nil, err
@@ -209,13 +222,18 @@ func (r *Repo) FriendLogs(ctx context.Context, friendID string) ([]domain.Log, e
 		var images []string
 		var locName *string
 		var lat, lng *float64
+		var metrics []byte
 		var createdAt time.Time
-		if err := rows.Scan(&l.ID, &l.AscentID, &l.Title, &l.Note, &l.MoodScore, &locName, &lat, &lng, &images, &createdAt); err != nil {
+		if err := rows.Scan(&l.ID, &l.AscentID, &l.Title, &l.Note, &l.MoodScore, &locName, &lat, &lng, &images, &metrics, &createdAt); err != nil {
 			return nil, err
 		}
 		l.ImageURLs = images
 		if l.ImageURLs == nil {
 			l.ImageURLs = []string{}
+		}
+		l.Metrics = map[string]string{}
+		if len(metrics) > 0 {
+			_ = json.Unmarshal(metrics, &l.Metrics)
 		}
 		l.DateEpochMs = createdAt.UnixMilli()
 		out = append(out, l)
@@ -257,13 +275,18 @@ func scanLogs(rows pgx.Rows) ([]domain.Log, error) {
 		var images []string
 		var locName *string
 		var lat, lng *float64
+		var metrics []byte
 		var createdAt time.Time
-		if err := rows.Scan(&l.ID, &l.AscentID, &l.Title, &l.Note, &l.MoodScore, &locName, &lat, &lng, &images, &createdAt); err != nil {
+		if err := rows.Scan(&l.ID, &l.AscentID, &l.Title, &l.Note, &l.MoodScore, &locName, &lat, &lng, &images, &metrics, &createdAt); err != nil {
 			return nil, err
 		}
 		l.ImageURLs = images
 		if l.ImageURLs == nil {
 			l.ImageURLs = []string{}
+		}
+		l.Metrics = map[string]string{}
+		if len(metrics) > 0 {
+			_ = json.Unmarshal(metrics, &l.Metrics)
 		}
 		if locName != nil && lat != nil && lng != nil {
 			l.Location = &domain.GeoLocation{Name: *locName, Lat: *lat, Lng: *lng}
@@ -385,6 +408,7 @@ type logReq struct {
 	MoodScore int                 `json:"moodScore"`
 	ImageURLs []string            `json:"imageUrls"`
 	Location  *domain.GeoLocation `json:"location"`
+	Metrics   map[string]string   `json:"metrics"`
 }
 
 func (h *Handler) AddLog(w http.ResponseWriter, r *http.Request) {
@@ -402,7 +426,7 @@ func (h *Handler) AddLog(w http.ResponseWriter, r *http.Request) {
 		mood = 4
 	}
 	log, err := h.repo.AddLog(r.Context(), httpx.UserID(r), chi.URLParam(r, "id"), domain.Log{
-		Title: strings.TrimSpace(req.Title), Note: strings.TrimSpace(req.Note), MoodScore: mood, ImageURLs: req.ImageURLs, Location: req.Location,
+		Title: strings.TrimSpace(req.Title), Note: strings.TrimSpace(req.Note), MoodScore: mood, ImageURLs: req.ImageURLs, Location: req.Location, Metrics: req.Metrics,
 	})
 	if err != nil {
 		if errors.Is(err, errNotFound) {

@@ -40,8 +40,9 @@ func New(pool *pgxpool.Pool, cfg config.Config) http.Handler {
 	r.Get("/health", func(w http.ResponseWriter, _ *http.Request) {
 		httpx.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
-	// Public: image proxy (Coil can't send the JWT).
+	// Public: image proxy + avatar serving (image loaders can't send the JWT).
 	r.Get("/place-photo", exploreH.Photo)
+	r.Get("/avatars/{id}", userH.ServeAvatar)
 	// Public temporary diagnostic for the Google key/API setup.
 	r.Get("/debug/places", exploreH.Debug)
 
@@ -57,6 +58,7 @@ func New(pool *pgxpool.Pool, cfg config.Config) http.Handler {
 		pr.Post("/users/name", userH.UpdateName)
 		pr.Get("/users/hobbies", userH.Hobbies)
 		pr.Put("/users/hobbies", userH.SetHobbies)
+		pr.Post("/users/avatar", userH.SetAvatar)
 
 		pr.Get("/catalog/interests", catalogH.Interests)
 		pr.Get("/catalog/cities", catalogH.Cities)

@@ -9,6 +9,7 @@ type User struct {
 	Phone       string   `json:"phone"`
 	Onboarded   bool     `json:"onboarded"`
 	AvatarHue   float64  `json:"avatarHue"`
+	AvatarURL   string   `json:"avatarUrl"`
 	InterestIDs []string `json:"interestIds"`
 }
 
@@ -163,14 +164,15 @@ func (a Ascent) WithSummitCategory() Ascent {
 }
 
 type Log struct {
-	ID          string       `json:"id"`
-	AscentID    string       `json:"ascentId"`
-	Title       string       `json:"title"`
-	Note        string       `json:"note"`
-	MoodScore   int          `json:"moodScore"`
-	ImageURLs   []string     `json:"imageUrls"`
-	Location    *GeoLocation `json:"location"`
-	DateEpochMs int64        `json:"dateEpochMs"`
+	ID          string            `json:"id"`
+	AscentID    string            `json:"ascentId"`
+	Title       string            `json:"title"`
+	Note        string            `json:"note"`
+	MoodScore   int               `json:"moodScore"`
+	ImageURLs   []string          `json:"imageUrls"`
+	Location    *GeoLocation      `json:"location"`
+	DateEpochMs int64             `json:"dateEpochMs"`
+	Metrics     map[string]string `json:"metrics"`
 }
 
 type AscentDetail struct {
