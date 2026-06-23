@@ -165,6 +165,10 @@ type Ascent struct {
 	LogCount       int    `json:"logCount"`
 	CreatedAtMs    int64  `json:"createdAtMs"`
 	SummitCategory string `json:"summitCategory"` // HOBBY | EXPLORE | SUMMIT | UNWIND (server-derived)
+	// My-Ascent hierarchy: ParentID set ⇒ a child item under a hobby parent;
+	// InterestID is the hobby this ascent belongs to (for grouping/theming).
+	ParentID   *string `json:"parentId"`
+	InterestID *string `json:"interestId"`
 }
 
 // WithSummitCategory fills SummitCategory from the ascent's category/kind.
@@ -188,6 +192,18 @@ type Log struct {
 type AscentDetail struct {
 	Ascent Ascent `json:"ascent"`
 	Logs   []Log  `json:"logs"`
+}
+
+// Wishlist is an Explore place the climber wants to visit. The JSON shape mirrors the
+// Kotlin app's WishlistItemDto so the client needs no parsing changes.
+type Wishlist struct {
+	ID               string      `json:"id"`
+	Item             ExploreItem `json:"item"`
+	PlannedDateMs    *int64      `json:"plannedDateMs"`
+	BookingURL       string      `json:"bookingUrl"`
+	AddedToCalendar  bool        `json:"addedToCalendar"`
+	InvitedFriendIDs []string    `json:"invitedFriendIds"`
+	CreatedAtMs      int64       `json:"createdAtMs"`
 }
 
 type FeedItem struct {

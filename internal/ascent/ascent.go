@@ -24,7 +24,7 @@ func NewRepo(pool *pgxpool.Pool) *Repo { return &Repo{pool: pool} }
 func (r *Repo) List(ctx context.Context, userID string) ([]domain.Ascent, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT a.id, a.title, a.category, a.theme, a.image_url, a.kind, a.location_name, a.status,
-		       (SELECT COUNT(*) FROM logs l WHERE l.ascent_id = a.id)::int AS log_count, a.created_at
+		       (SELECT COUNT(*) FROM logs l WHERE l.ascent_id = a.id)::int AS log_count, a.created_at, a.parent_id, a.interest_id
 		FROM ascents a WHERE a.user_id = $1 ORDER BY a.created_at DESC`, userID)
 	if err != nil {
 		return nil, err
@@ -36,7 +36,7 @@ func (r *Repo) List(ctx context.Context, userID string) ([]domain.Ascent, error)
 func (r *Repo) Get(ctx context.Context, userID, id string) (domain.Ascent, error) {
 	row := r.pool.QueryRow(ctx, `
 		SELECT a.id, a.title, a.category, a.theme, a.image_url, a.kind, a.location_name, a.status,
-		       (SELECT COUNT(*) FROM logs l WHERE l.ascent_id = a.id)::int AS log_count, a.created_at
+		       (SELECT COUNT(*) FROM logs l WHERE l.ascent_id = a.id)::int AS log_count, a.created_at, a.parent_id, a.interest_id
 		FROM ascents a WHERE a.id = $1 AND a.user_id = $2`, id, userID)
 	return scanAscent(row)
 }
@@ -45,7 +45,7 @@ func (r *Repo) Get(ctx context.Context, userID, id string) (domain.Ascent, error
 func (r *Repo) FindBySource(ctx context.Context, userID, sourceID string) (domain.Ascent, bool, error) {
 	row := r.pool.QueryRow(ctx, `
 		SELECT a.id, a.title, a.category, a.theme, a.image_url, a.kind, a.location_name, a.status,
-		       (SELECT COUNT(*) FROM logs l WHERE l.ascent_id = a.id)::int AS log_count, a.created_at
+		       (SELECT COUNT(*) FROM logs l WHERE l.ascent_id = a.id)::int AS log_count, a.created_at, a.parent_id, a.interest_id
 		FROM ascents a WHERE a.user_id = $1 AND a.source_item_id = $2 LIMIT 1`, userID, sourceID)
 	a, err := scanAscentRow(row)
 	if err == pgx.ErrNoRows {
@@ -73,10 +73,10 @@ func (r *Repo) Create(ctx context.Context, userID string, a domain.Ascent, sourc
 	var id string
 	var createdAt time.Time
 	err := r.pool.QueryRow(ctx, `
-		INSERT INTO ascents (user_id, title, category, theme, image_url, kind, location_name, source_item_id, status)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'ACTIVE')
+		INSERT INTO ascents (user_id, title, category, theme, image_url, kind, location_name, source_item_id, parent_id, interest_id, status)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'ACTIVE')
 		RETURNING id, created_at`,
-		userID, a.Title, a.Category, a.Theme, a.ImageURL, a.Kind, nullStr(a.LocationName), nullStr(sourceItemID)).
+		userID, a.Title, a.Category, a.Theme, a.ImageURL, a.Kind, nullStr(a.LocationName), nullStr(sourceItemID), a.ParentID, a.InterestID).
 		Scan(&id, &createdAt)
 	if err != nil {
 		return domain.Ascent{}, err
@@ -301,7 +301,7 @@ func scanAscentRow(row scannable) (domain.Ascent, error) {
 	var a domain.Ascent
 	var locName *string
 	var createdAt time.Time
-	if err := row.Scan(&a.ID, &a.Title, &a.Category, &a.Theme, &a.ImageURL, &a.Kind, &locName, &a.Status, &a.LogCount, &createdAt); err != nil {
+	if err := row.Scan(&a.ID, &a.Title, &a.Category, &a.Theme, &a.ImageURL, &a.Kind, &locName, &a.Status, &a.LogCount, &createdAt, &a.ParentID, &a.InterestID); err != nil {
 		return domain.Ascent{}, err
 	}
 	if locName != nil {
@@ -327,13 +327,15 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 }
 
 type createReq struct {
-	FromExploreItemID string `json:"fromExploreItemId"`
-	Title             string `json:"title"`
-	Category          string `json:"category"`
-	Theme             string `json:"theme"`
-	Kind              string `json:"kind"`
-	LocationName      string `json:"locationName"`
-	ImageURL          string `json:"imageUrl"`
+	FromExploreItemID string  `json:"fromExploreItemId"`
+	Title             string  `json:"title"`
+	Category          string  `json:"category"`
+	Theme             string  `json:"theme"`
+	Kind              string  `json:"kind"`
+	LocationName      string  `json:"locationName"`
+	ImageURL          string  `json:"imageUrl"`
+	ParentID          *string `json:"parentId"`
+	InterestID        *string `json:"interestId"`
 }
 
 func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
@@ -373,6 +375,9 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "title required")
 		return
 	}
+
+	a.ParentID = req.ParentID
+	a.InterestID = req.InterestID
 
 	created, err := h.repo.Create(r.Context(), uid, a, source)
 	if err != nil {

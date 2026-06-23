@@ -19,6 +19,7 @@ import (
 	"github.com/kumargaurav/summit-backend/internal/integration"
 	"github.com/kumargaurav/summit-backend/internal/places"
 	"github.com/kumargaurav/summit-backend/internal/user"
+	"github.com/kumargaurav/summit-backend/internal/wishlist"
 )
 
 func New(pool *pgxpool.Pool, cfg config.Config) http.Handler {
@@ -37,6 +38,7 @@ func New(pool *pgxpool.Pool, cfg config.Config) http.Handler {
 	catalogH := catalog.NewHandler(catalog.NewRepo(pool))
 	hobbyH := hobby.NewHandler(hobby.NewRepo(pool))
 	integrationH := integration.NewHandler(integration.NewRepo(pool))
+	wishlistH := wishlist.NewHandler(wishlist.NewRepo(pool))
 
 	r := chi.NewRouter()
 	r.Use(httpx.Recover, httpx.RequestLogger, httpx.CORS)
@@ -86,6 +88,11 @@ func New(pool *pgxpool.Pool, cfg config.Config) http.Handler {
 		pr.Post("/ascents/{id}/logs", ascentH.AddLog)
 		pr.Post("/ascents/{id}/summit", ascentH.Summit)
 		pr.Get("/logs", ascentH.AllLogs)
+
+		pr.Get("/wishlist", wishlistH.List)
+		pr.Post("/wishlist", wishlistH.Add)
+		pr.Put("/wishlist/{id}", wishlistH.UpdatePlan)
+		pr.Delete("/wishlist/{id}", wishlistH.Remove)
 
 		pr.Get("/feed", ascentH.Feed)
 		pr.Get("/experiences/feed", ascentH.Feed)
