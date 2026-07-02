@@ -162,8 +162,11 @@ func (h *Handler) Feed(w http.ResponseWriter, r *http.Request) {
 	sections := []domain.ExploreSection{
 		{ID: "popular", Title: "Popular places near you", Layout: "CARDS", Items: take(h.searchItems(ctx, "top tourist attractions", "explore", "PLACE", lat, lng), 8)},
 		{ID: "world", Title: "In the spotlight", Layout: "SPOTLIGHT", Items: take(h.searchItems(ctx, "iconic landmark scenic", "explore", "PLACE", lat, lng), 5)},
+		// What's actually happening around the user — live venues, gigs, exhibitions.
+		{ID: "happening", Title: "Happening around you", Layout: "CAROUSEL", Items: take(h.searchItems(ctx, "live music concert venue events tonight", "event", "EVENT", lat, lng), 8)},
 		{ID: "weekend", Title: "Weekend escapes", Layout: "CAROUSEL", Items: take(h.searchItems(ctx, "scenic day trip nature getaway", "travel", "PLACE", lat, lng), 8)},
-		{ID: "unwind", Title: "Unwind nearby", Layout: "UNWIND", Items: take(h.searchItems(ctx, "park lake garden viewpoint dessert rooftop lounge", "cafe", "PLACE", lat, lng), 8)},
+		// Unwind is more than cafés: bookstores, galleries, spas, viewpoints, dessert spots.
+		{ID: "unwind", Title: "Unwind nearby", Layout: "UNWIND", Items: take(h.searchItems(ctx, "bookstore art gallery spa park lake viewpoint dessert rooftop lounge", "unwind", "PLACE", lat, lng), 10)},
 	}
 	httpx.JSON(w, http.StatusOK, decorateFeed(domain.ExploreFeed{Sections: sections}))
 }
