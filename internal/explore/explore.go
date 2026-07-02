@@ -165,10 +165,44 @@ func (h *Handler) Feed(w http.ResponseWriter, r *http.Request) {
 		// What's actually happening around the user — live venues, gigs, exhibitions.
 		{ID: "happening", Title: "Happening around you", Layout: "CAROUSEL", Items: take(h.searchItems(ctx, "live music concert venue events tonight", "event", "EVENT", lat, lng), 8)},
 		{ID: "weekend", Title: "Weekend escapes", Layout: "CAROUSEL", Items: take(h.searchItems(ctx, "scenic day trip nature getaway", "travel", "PLACE", lat, lng), 8)},
-		// Unwind is more than cafés: bookstores, galleries, spas, viewpoints, dessert spots.
-		{ID: "unwind", Title: "Unwind nearby", Layout: "UNWIND", Items: take(h.searchItems(ctx, "bookstore art gallery spa park lake viewpoint dessert rooftop lounge", "unwind", "PLACE", lat, lng), 10)},
+		// Unwind is more than cafés — a mosaic across categories, filterable client-side.
+		{ID: "unwind", Title: "Unwind nearby", Layout: "UNWIND", Items: h.unwindItems(ctx, lat, lng)},
 	}
 	httpx.JSON(w, http.StatusOK, decorateFeed(domain.ExploreFeed{Sections: sections}))
+}
+
+// unwindItems fans out one Places search per unwind category (concurrently) and tags each
+// item with its category, so the client can render chips + a filtered mosaic.
+func (h *Handler) unwindItems(ctx context.Context, lat, lng float64) []domain.ExploreItem {
+	cats := []struct{ label, query string }{
+		{"Cafes", "specialty coffee cafe"},
+		{"Parks", "park lake garden"},
+		{"Bookstores", "bookstore library"},
+		{"Galleries", "art gallery museum"},
+		{"Spas", "spa wellness"},
+		{"Desserts", "dessert ice cream bakery"},
+		{"Views", "viewpoint rooftop sunset point"},
+	}
+	type part struct {
+		i     int
+		items []domain.ExploreItem
+	}
+	ch := make(chan part, len(cats))
+	for i, c := range cats {
+		go func(i int, label, query string) {
+			ch <- part{i, take(h.searchItems(ctx, query, label, "PLACE", lat, lng), 4)}
+		}(i, c.label, c.query)
+	}
+	ordered := make([][]domain.ExploreItem, len(cats))
+	for range cats {
+		p := <-ch
+		ordered[p.i] = p.items
+	}
+	out := []domain.ExploreItem{}
+	for _, items := range ordered {
+		out = append(out, items...)
+	}
+	return out
 }
 
 func keywordForHobby(id string) string {
