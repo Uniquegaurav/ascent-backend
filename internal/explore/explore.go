@@ -157,25 +157,14 @@ func (h *Handler) Feed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
+	// Explore is places-only: what to visit near you. Hobby venues (dance studios,
+	// bookstores, …) live in the Ascent tab's per-hobby feeds instead.
 	sections := []domain.ExploreSection{
 		{ID: "popular", Title: "Popular places near you", Layout: "CARDS", Items: take(h.searchItems(ctx, "top tourist attractions", "explore", "PLACE", lat, lng), 8)},
 		{ID: "world", Title: "In the spotlight", Layout: "SPOTLIGHT", Items: take(h.searchItems(ctx, "iconic landmark scenic", "explore", "PLACE", lat, lng), 5)},
+		{ID: "weekend", Title: "Weekend escapes", Layout: "CAROUSEL", Items: take(h.searchItems(ctx, "scenic day trip nature getaway", "travel", "PLACE", lat, lng), 8)},
+		{ID: "unwind", Title: "Unwind nearby", Layout: "UNWIND", Items: take(h.searchItems(ctx, "park lake garden viewpoint dessert rooftop lounge", "cafe", "PLACE", lat, lng), 8)},
 	}
-	// Personalized Trending sub-rows from the user's hobbies (live Places search).
-	seen := map[string]bool{}
-	for i, id := range hobbies {
-		if i >= 4 || id == "" || seen[id] {
-			continue
-		}
-		seen[id] = true
-		items := take(h.searchItems(ctx, keywordForHobby(id), id, "PLACE", lat, lng), 8)
-		if len(items) > 0 {
-			sections = append(sections, domain.ExploreSection{ID: "trending_" + id, Title: "Trending " + capWord(id), Layout: "CAROUSEL", Items: items})
-		}
-	}
-	sections = append(sections,
-		domain.ExploreSection{ID: "unwind", Title: "Unwind nearby", Layout: "UNWIND", Items: take(h.searchItems(ctx, "park lake garden viewpoint dessert rooftop lounge bookstore", "cafe", "PLACE", lat, lng), 8)},
-	)
 	httpx.JSON(w, http.StatusOK, decorateFeed(domain.ExploreFeed{Sections: sections}))
 }
 

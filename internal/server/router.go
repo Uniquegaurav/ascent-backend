@@ -9,7 +9,6 @@ import (
 	"github.com/kumargaurav/summit-backend/internal/ascent"
 	"github.com/kumargaurav/summit-backend/internal/auth"
 	"github.com/kumargaurav/summit-backend/internal/catalog"
-	"github.com/kumargaurav/summit-backend/internal/challenge"
 	"github.com/kumargaurav/summit-backend/internal/config"
 	"github.com/kumargaurav/summit-backend/internal/discovery"
 	"github.com/kumargaurav/summit-backend/internal/explore"
@@ -33,7 +32,6 @@ func New(pool *pgxpool.Pool, cfg config.Config) http.Handler {
 	exploreH := explore.NewHandler(pc, pool)
 	ascentH := ascent.NewHandler(ascent.NewRepo(pool))
 	friendH := friend.NewHandler(friend.NewRepo(pool))
-	challengeH := challenge.NewHandler(challenge.NewRepo(pool))
 	discoveryH := discovery.NewHandler(discovery.NewService(pc))
 	catalogH := catalog.NewHandler(catalog.NewRepo(pool))
 	hobbyH := hobby.NewHandler(hobby.NewRepo(pool))
@@ -65,6 +63,7 @@ func New(pool *pgxpool.Pool, cfg config.Config) http.Handler {
 		pr.Get("/users/hobbies", userH.Hobbies)
 		pr.Put("/users/hobbies", userH.SetHobbies)
 		pr.Get("/hobbies/{id}/guide", hobbyH.Guide)
+		pr.Get("/hobbies/{id}/picks", hobbyH.Picks)
 
 		pr.Get("/integrations", integrationH.List)
 		pr.Post("/integrations/{id}/connect", integrationH.Connect)
@@ -104,9 +103,6 @@ func New(pool *pgxpool.Pool, cfg config.Config) http.Handler {
 		pr.Post("/friends/{id}/invite", ascentH.Invite)
 		pr.Get("/friends/{id}/logs", ascentH.FriendLogs)
 
-		pr.Get("/challenges", challengeH.List)
-		pr.Post("/challenges/{id}/join", challengeH.Join)
-		pr.Post("/challenges/{id}/complete", challengeH.Complete)
 
 		pr.Get("/places", discoveryH.Places)
 		pr.Get("/events", discoveryH.Events)

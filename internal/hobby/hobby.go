@@ -90,6 +90,37 @@ func (r *Repo) Guide(ctx context.Context, id string) (Guide, error) {
 	}, nil
 }
 
+// ---- Picks (curated discovery list, not location-based) -------------------
+
+// Pick is one curated item in a hobby's discovery list (a book, an art form, a sport…).
+type Pick struct {
+	Title    string `json:"title"`
+	Subtitle string `json:"subtitle,omitempty"`
+	Meta     string `json:"meta,omitempty"`
+}
+
+// Picks is a named, hand-curated collection for a hobby — e.g. "Popular books" for reading,
+// "Art forms" for art. Surfaced in the Ascent tab as a list (not a map of nearby places).
+type Picks struct {
+	InterestID string `json:"interestId"`
+	Title      string `json:"title"`
+	Items      []Pick `json:"items"`
+}
+
+func (r *Repo) Picks(id string) Picks {
+	p, ok := picks[id]
+	if !ok {
+		return Picks{InterestID: id, Title: "", Items: []Pick{}}
+	}
+	p.InterestID = id
+	return p
+}
+
+func (h *Handler) Picks(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimSpace(chi.URLParam(r, "id"))
+	httpx.JSON(w, http.StatusOK, h.repo.Picks(id))
+}
+
 // ---- HTTP -----------------------------------------------------------------
 
 type Handler struct{ repo *Repo }
