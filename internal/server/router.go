@@ -64,6 +64,7 @@ func New(pool *pgxpool.Pool, cfg config.Config) http.Handler {
 		pr.Put("/users/hobbies", userH.SetHobbies)
 		pr.Get("/hobbies/{id}/guide", hobbyH.Guide)
 		pr.Get("/hobbies/{id}/picks", hobbyH.Picks)
+		pr.Get("/hobbies/discover", hobbyH.Discover)
 
 		pr.Get("/integrations", integrationH.List)
 		pr.Post("/integrations/{id}/connect", integrationH.Connect)
