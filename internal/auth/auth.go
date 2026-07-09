@@ -25,7 +25,8 @@ const otpTTL = 5 * time.Minute
 
 // ---- SMS ------------------------------------------------------------------
 
-// SMSSender delivers a one-time code. Swap LogSender for Twilio/MSG91 in prod.
+// SMSSender delivers a one-time code. LogSender is the dev implementation;
+// MSG91Sender (sms.go) is the production one, selected via SMS_PROVIDER.
 type SMSSender interface {
 	Send(ctx context.Context, phone, code string) error
 }
@@ -130,6 +131,16 @@ func (r *Repo) ConsumeRefresh(ctx context.Context, hash string) (userID string, 
 	return userID, true, nil
 }
 
+// CleanupExpired deletes stale OTP rows and dead refresh tokens so the auth
+// tables don't grow without bound. Meant to run periodically (see cmd/api).
+func (r *Repo) CleanupExpired(ctx context.Context) error {
+	if _, err := r.pool.Exec(ctx, `DELETE FROM otp_codes WHERE expires_at < now() - interval '1 day'`); err != nil {
+		return err
+	}
+	_, err := r.pool.Exec(ctx, `DELETE FROM refresh_tokens WHERE expires_at < now() OR revoked = TRUE`)
+	return err
+}
+
 func (r *Repo) UpsertUserByPhone(ctx context.Context, phone string) (domain.User, error) {
 	var u domain.User
 	err := r.pool.QueryRow(ctx, `
@@ -163,17 +174,40 @@ func (r *Repo) interestIDs(ctx context.Context, userID string) ([]string, error)
 
 // ---- Service --------------------------------------------------------------
 
-type Service struct {
-	repo       *Repo
-	sms        SMSSender
-	tokens     TokenManager
-	devCode    string
-	dev        bool
-	refreshTTL time.Duration
+// Store is the persistence surface the service depends on (Repo in prod,
+// fakes in tests).
+type Store interface {
+	SaveOTP(ctx context.Context, phone, hash string, expires time.Time) error
+	ConsumeOTP(ctx context.Context, phone, hash string) (bool, error)
+	SaveRefresh(ctx context.Context, userID, hash string, expires time.Time) error
+	ConsumeRefresh(ctx context.Context, hash string) (string, bool, error)
+	UpsertUserByPhone(ctx context.Context, phone string) (domain.User, error)
 }
 
-func NewService(repo *Repo, sms SMSSender, tokens TokenManager, devCode string, dev bool, refreshTTL time.Duration) *Service {
-	return &Service{repo: repo, sms: sms, tokens: tokens, devCode: devCode, dev: dev, refreshTTL: refreshTTL}
+type ServiceOpts struct {
+	// DevCode always verifies in Dev mode; outside dev it verifies only for
+	// ReviewPhone (app-store review accounts). Empty disables the backdoor.
+	DevCode     string
+	ReviewPhone string
+	Dev         bool
+	RefreshTTL  time.Duration
+}
+
+type Service struct {
+	repo         Store
+	sms          SMSSender
+	tokens       TokenManager
+	opts         ServiceOpts
+	requestLimit *httpx.RateLimiter // OTP sends per phone
+	verifyLimit  *httpx.RateLimiter // verify attempts per phone
+}
+
+func NewService(repo Store, sms SMSSender, tokens TokenManager, opts ServiceOpts) *Service {
+	return &Service{
+		repo: repo, sms: sms, tokens: tokens, opts: opts,
+		requestLimit: httpx.NewRateLimiter(3, time.Hour),
+		verifyLimit:  httpx.NewRateLimiter(10, 10*time.Minute),
+	}
 }
 
 func (s *Service) Tokens() TokenManager { return s.tokens }
@@ -188,7 +222,7 @@ func (s *Service) issueTokens(ctx context.Context, userID string) (access, refre
 	if err != nil {
 		return "", "", err
 	}
-	if err := s.repo.SaveRefresh(ctx, userID, hashToken(refresh), time.Now().Add(s.refreshTTL)); err != nil {
+	if err := s.repo.SaveRefresh(ctx, userID, hashToken(refresh), time.Now().Add(s.opts.RefreshTTL)); err != nil {
 		return "", "", err
 	}
 	return access, refresh, nil
@@ -206,7 +240,34 @@ func (s *Service) Refresh(ctx context.Context, refreshToken string) (access, ref
 	return s.issueTokens(ctx, userID)
 }
 
-func normalizePhone(p string) string { return strings.TrimSpace(p) }
+// normalizePhone strips formatting (spaces, dashes, parens), keeping a single
+// leading + so numbers compare and store consistently.
+func normalizePhone(p string) string {
+	p = strings.TrimSpace(p)
+	var b strings.Builder
+	for i, r := range p {
+		if r >= '0' && r <= '9' {
+			b.WriteRune(r)
+		} else if r == '+' && i == 0 {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// validPhone accepts E.164-style numbers: optional +, 7–15 digits.
+func validPhone(p string) bool {
+	digits := strings.TrimPrefix(p, "+")
+	if len(digits) < 7 || len(digits) > 15 {
+		return false
+	}
+	for _, r := range digits {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
 
 func hashCode(phone, code string) string {
 	sum := sha256.Sum256([]byte(phone + ":" + code))
@@ -215,8 +276,11 @@ func hashCode(phone, code string) string {
 
 func (s *Service) RequestOTP(ctx context.Context, phone string) error {
 	phone = normalizePhone(phone)
-	if len(phone) < 7 {
-		return errors.New("invalid phone")
+	if !validPhone(phone) {
+		return errInvalidPhone
+	}
+	if !s.requestLimit.Allow(phone) {
+		return errRateLimited
 	}
 	code, err := randomCode()
 	if err != nil {
@@ -228,10 +292,24 @@ func (s *Service) RequestOTP(ctx context.Context, phone string) error {
 	return s.sms.Send(ctx, phone, code)
 }
 
+// devCodeMatches reports whether the backdoor code applies: always in dev,
+// only for the designated review phone outside dev, never when unset.
+func (s *Service) devCodeMatches(phone, code string) bool {
+	if s.opts.DevCode == "" || code != s.opts.DevCode {
+		return false
+	}
+	return s.opts.Dev || (s.opts.ReviewPhone != "" && phone == normalizePhone(s.opts.ReviewPhone))
+}
+
 func (s *Service) VerifyOTP(ctx context.Context, phone, code string) (access, refresh string, user domain.User, err error) {
 	phone = normalizePhone(phone)
-	// Silent dev backdoor code (no UI hint) alongside the real per-phone code.
-	ok := s.dev && code == s.devCode
+	if !validPhone(phone) {
+		return "", "", domain.User{}, errInvalidCode
+	}
+	if !s.verifyLimit.Allow(phone) {
+		return "", "", domain.User{}, errRateLimited
+	}
+	ok := s.devCodeMatches(phone, code)
 	if !ok {
 		found, ferr := s.repo.ConsumeOTP(ctx, phone, hashCode(phone, code))
 		if ferr != nil {
@@ -256,6 +334,8 @@ func (s *Service) VerifyOTP(ctx context.Context, phone, code string) (access, re
 var (
 	errInvalidCode    = errors.New("invalid or expired code")
 	errInvalidRefresh = errors.New("invalid or expired refresh token")
+	errInvalidPhone   = errors.New("invalid phone number")
+	errRateLimited    = errors.New("too many attempts, try again later")
 )
 
 func randomCode() (string, error) {
@@ -301,7 +381,14 @@ func (h *Handler) RequestOTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.svc.RequestOTP(r.Context(), req.Phone); err != nil {
-		httpx.Error(w, http.StatusBadRequest, err.Error())
+		switch {
+		case errors.Is(err, errInvalidPhone):
+			httpx.Error(w, http.StatusBadRequest, err.Error())
+		case errors.Is(err, errRateLimited):
+			httpx.Error(w, http.StatusTooManyRequests, err.Error())
+		default:
+			httpx.Internal(w, r, err, "could not send code")
+		}
 		return
 	}
 	httpx.JSON(w, http.StatusOK, map[string]bool{"ok": true})
@@ -320,11 +407,14 @@ func (h *Handler) VerifyOTP(w http.ResponseWriter, r *http.Request) {
 	}
 	access, refresh, user, err := h.svc.VerifyOTP(r.Context(), req.Phone, req.Code)
 	if err != nil {
-		if errors.Is(err, errInvalidCode) {
+		switch {
+		case errors.Is(err, errInvalidCode):
 			httpx.Error(w, http.StatusUnauthorized, err.Error())
-			return
+		case errors.Is(err, errRateLimited):
+			httpx.Error(w, http.StatusTooManyRequests, err.Error())
+		default:
+			httpx.Internal(w, r, err, "could not verify")
 		}
-		httpx.Error(w, http.StatusInternalServerError, "could not verify")
 		return
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"token": access, "refreshToken": refresh, "user": user})
@@ -346,7 +436,7 @@ func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
 			httpx.Error(w, http.StatusUnauthorized, err.Error())
 			return
 		}
-		httpx.Error(w, http.StatusInternalServerError, "could not refresh")
+		httpx.Internal(w, r, err, "could not refresh")
 		return
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"token": access, "refreshToken": refresh})

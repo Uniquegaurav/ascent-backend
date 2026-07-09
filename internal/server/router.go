@@ -1,7 +1,9 @@
 package server
 
 import (
+	"context"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -24,7 +26,12 @@ import (
 func New(pool *pgxpool.Pool, cfg config.Config) http.Handler {
 	authRepo := auth.NewRepo(pool)
 	tokens := auth.NewTokenManager(cfg.JWTSecret, cfg.AccessTokenTTL)
-	authSvc := auth.NewService(authRepo, auth.LogSender{}, tokens, cfg.OTPDevCode, cfg.IsDev(), cfg.RefreshTokenTTL)
+	authSvc := auth.NewService(authRepo, auth.NewSender(cfg), tokens, auth.ServiceOpts{
+		DevCode:     cfg.OTPDevCode,
+		ReviewPhone: cfg.OTPReviewPhone,
+		Dev:         cfg.IsDev(),
+		RefreshTTL:  cfg.RefreshTokenTTL,
+	})
 	authH := auth.NewHandler(authSvc)
 
 	pc := places.New(cfg.GooglePlacesKey)
@@ -39,29 +46,58 @@ func New(pool *pgxpool.Pool, cfg config.Config) http.Handler {
 	wishlistH := wishlist.NewHandler(wishlist.NewRepo(pool))
 
 	r := chi.NewRouter()
-	r.Use(httpx.Recover, httpx.RequestLogger, httpx.CORS)
+	r.Use(httpx.Recover, httpx.RequestID, httpx.RequestLogger, httpx.CORS,
+		httpx.RateLimit(httpx.NewRateLimiter(300, time.Minute)))
 
-	r.Get("/health", func(w http.ResponseWriter, _ *http.Request) {
+	r.Get("/health", func(w http.ResponseWriter, req *http.Request) {
+		ctx, cancel := context.WithTimeout(req.Context(), 2*time.Second)
+		defer cancel()
+		if err := pool.Ping(ctx); err != nil {
+			httpx.Error(w, http.StatusServiceUnavailable, "database unreachable")
+			return
+		}
 		httpx.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 	// Public: image proxy + avatar serving (image loaders can't send the JWT).
 	r.Get("/place-photo", exploreH.Photo)
 	r.Get("/avatars/{id}", userH.ServeAvatar)
-	// Public temporary diagnostic for the Google key/API setup.
-	r.Get("/debug/places", exploreH.Debug)
 
-	r.Post("/auth/request-otp", authH.RequestOTP)
-	r.Post("/auth/verify-otp", authH.VerifyOTP)
+	// Auth endpoints get a tighter per-IP window on top of the per-phone
+	// limits inside the service (OTP sends cost real money once SMS is live).
+	r.Group(func(ar chi.Router) {
+		ar.Use(httpx.RateLimit(httpx.NewRateLimiter(30, time.Hour)))
+		ar.Post("/auth/request-otp", authH.RequestOTP)
+		ar.Post("/auth/verify-otp", authH.VerifyOTP)
+	})
 	r.Post("/auth/refresh", authH.Refresh)
+
+	// Guest-browsable: discovery content works logged-out (auth still resolves
+	// when a token is sent, so trending stays personalized for members).
+	r.Group(func(gr chi.Router) {
+		gr.Use(httpx.OptionalAuth(tokens.Validate))
+
+		gr.Get("/catalog/interests", catalogH.Interests)
+		gr.Get("/catalog/cities", catalogH.Cities)
+		gr.Get("/catalog/searches", catalogH.PopularSearches)
+		gr.Get("/catalog/categories", catalogH.Categories)
+
+		gr.Get("/explore", exploreH.Feed)
+		gr.Get("/explore/search", exploreH.Search)
+		gr.Get("/explore/{id}", exploreH.Detail)
+		gr.Get("/treks", exploreH.Treks)
+		gr.Get("/geocode/reverse", exploreH.ReverseGeocode)
+	})
 
 	r.Group(func(pr chi.Router) {
 		pr.Use(httpx.RequireAuth(tokens.Validate))
 
 		pr.Get("/users/me", userH.Me)
+		pr.Delete("/users/me", userH.DeleteMe)
 		pr.Post("/users/onboarding", userH.Onboarding)
 		pr.Post("/users/name", userH.UpdateName)
 		pr.Get("/users/hobbies", userH.Hobbies)
 		pr.Put("/users/hobbies", userH.SetHobbies)
+		pr.Post("/devices", userH.RegisterDevice)
 		pr.Get("/hobbies/{id}/guide", hobbyH.Guide)
 		pr.Get("/hobbies/{id}/picks", hobbyH.Picks)
 		pr.Get("/hobbies/discover", hobbyH.Discover)
@@ -70,17 +106,6 @@ func New(pool *pgxpool.Pool, cfg config.Config) http.Handler {
 		pr.Post("/integrations/{id}/connect", integrationH.Connect)
 		pr.Post("/integrations/{id}/disconnect", integrationH.Disconnect)
 		pr.Post("/users/avatar", userH.SetAvatar)
-
-		pr.Get("/catalog/interests", catalogH.Interests)
-		pr.Get("/catalog/cities", catalogH.Cities)
-		pr.Get("/catalog/searches", catalogH.PopularSearches)
-		pr.Get("/catalog/categories", catalogH.Categories)
-
-		pr.Get("/explore", exploreH.Feed)
-		pr.Get("/explore/search", exploreH.Search)
-		pr.Get("/explore/{id}", exploreH.Detail)
-		pr.Get("/treks", exploreH.Treks)
-		pr.Get("/geocode/reverse", exploreH.ReverseGeocode)
 
 		pr.Get("/ascents", ascentH.List)
 		pr.Post("/ascents", ascentH.Create)
@@ -96,6 +121,8 @@ func New(pool *pgxpool.Pool, cfg config.Config) http.Handler {
 
 		pr.Get("/feed", ascentH.Feed)
 		pr.Get("/experiences/feed", ascentH.Feed)
+		pr.Post("/logs/{id}/reactions", ascentH.React)
+		pr.Delete("/logs/{id}/reactions", ascentH.Unreact)
 
 		pr.Get("/friends/list", friendH.List)
 		pr.Post("/friends/sync-contacts", friendH.SyncContacts)

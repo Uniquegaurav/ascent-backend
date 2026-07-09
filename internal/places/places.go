@@ -18,50 +18,24 @@ const base = "https://maps.googleapis.com/maps/api"
 type Client struct {
 	key  string
 	http *http.Client
+
+	searchCache *ttlCache // query+cell → []Place
+	detailCache *ttlCache // placeID → Detail
+	geoCache    *ttlCache // fine cell → label
 }
 
 func New(key string) *Client {
-	return &Client{key: key, http: &http.Client{Timeout: 10 * time.Second}}
+	return &Client{
+		key:  key,
+		http: &http.Client{Timeout: 10 * time.Second},
+
+		searchCache: newTTLCache(6*time.Hour, 4000),
+		detailCache: newTTLCache(24*time.Hour, 4000),
+		geoCache:    newTTLCache(24*time.Hour, 4000),
+	}
 }
 
 func (c *Client) Enabled() bool { return c.key != "" }
-
-// Diag is a temporary diagnostic of the key/API setup (surfaces Google's status).
-type Diag struct {
-	KeySet      bool   `json:"keySet"`
-	KeyLen      int    `json:"keyLen"`
-	TextStatus  string `json:"textStatus"`
-	TextError   string `json:"textError"`
-	TextResults int    `json:"textResults"`
-	GeoStatus   string `json:"geoStatus"`
-	GeoError    string `json:"geoError"`
-}
-
-func (c *Client) Diagnose(ctx context.Context, lat, lng float64) Diag {
-	d := Diag{KeySet: c.key != "", KeyLen: len(c.key)}
-	if !c.Enabled() {
-		return d
-	}
-	tq := url.Values{}
-	tq.Set("query", "coffee")
-	tq.Set("location", fmt.Sprintf("%f,%f", lat, lng))
-	tq.Set("radius", "5000")
-	var ts searchResp
-	if err := c.get(ctx, "/place/textsearch/json", tq, &ts); err != nil {
-		d.TextError = err.Error()
-	} else {
-		d.TextStatus, d.TextError, d.TextResults = ts.Status, ts.ErrorMessage, len(ts.Results)
-	}
-	gq := url.Values{}
-	gq.Set("latlng", fmt.Sprintf("%f,%f", lat, lng))
-	var gr geocodeResp
-	if err := c.get(ctx, "/geocode/json", gq, &gr); err != nil {
-		d.GeoError = err.Error()
-	} else {
-		d.GeoStatus, d.GeoError = gr.Status, gr.ErrorMessage
-	}
-	return d
-}
 
 // ---- raw response shapes --------------------------------------------------
 
@@ -141,7 +115,12 @@ func (c *Client) get(ctx context.Context, path string, q url.Values, out any) er
 }
 
 // TextSearch powers free-text search and the location-based explore rails.
+// Results are cached per query + ~5km location cell.
 func (c *Client) TextSearch(ctx context.Context, query string, lat, lng float64) ([]Place, error) {
+	key := "ts|" + query + "|" + cell(lat, lng)
+	if v, ok := c.searchCache.get(key); ok {
+		return v.([]Place), nil
+	}
 	q := url.Values{}
 	q.Set("query", query)
 	if lat != 0 || lng != 0 {
@@ -153,7 +132,11 @@ func (c *Client) TextSearch(ctx context.Context, query string, lat, lng float64)
 		return nil, err
 	}
 	logStatus("textsearch", r.Status, r.ErrorMessage)
-	return mapPlaces(r.Results), nil
+	out := mapPlaces(r.Results)
+	if r.Status == "OK" || r.Status == "ZERO_RESULTS" {
+		c.searchCache.put(key, out)
+	}
+	return out, nil
 }
 
 func mapPlaces(raw []rawPlace) []Place {
@@ -222,6 +205,9 @@ type detailResp struct {
 }
 
 func (c *Client) Details(ctx context.Context, placeID string) (Detail, error) {
+	if v, ok := c.detailCache.get("d|" + placeID); ok {
+		return v.(Detail), nil
+	}
 	q := url.Values{}
 	q.Set("place_id", placeID)
 	q.Set("fields", "place_id,name,formatted_address,formatted_phone_number,website,rating,user_ratings_total,types,opening_hours,photos,reviews,geometry")
@@ -242,6 +228,9 @@ func (c *Client) Details(ctx context.Context, placeID string) (Detail, error) {
 	}
 	for _, rv := range res.Reviews {
 		d.Reviews = append(d.Reviews, Review{Author: rv.AuthorName, Rating: rv.Rating, Text: rv.Text, When: rv.Relative})
+	}
+	if r.Status == "OK" {
+		c.detailCache.put("d|"+placeID, d)
 	}
 	return d, nil
 }
@@ -283,6 +272,10 @@ type geocodeResp struct {
 }
 
 func (c *Client) ReverseGeocode(ctx context.Context, lat, lng float64) (string, error) {
+	key := "rg|" + geoCell(lat, lng)
+	if v, ok := c.geoCache.get(key); ok {
+		return v.(string), nil
+	}
 	q := url.Values{}
 	q.Set("latlng", fmt.Sprintf("%f,%f", lat, lng))
 	var r geocodeResp
@@ -306,11 +299,15 @@ func (c *Client) ReverseGeocode(ctx context.Context, lat, lng float64) (string, 
 			break
 		}
 	}
-	if city == "" {
-		return country, nil
+	label := city
+	switch {
+	case city == "":
+		label = country
+	case country != "":
+		label = city + ", " + country
 	}
-	if country != "" {
-		return city + ", " + country, nil
+	if r.Status == "OK" || r.Status == "ZERO_RESULTS" {
+		c.geoCache.put(key, label)
 	}
-	return city, nil
+	return label, nil
 }

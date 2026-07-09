@@ -15,8 +15,7 @@ TRUNCATE TABLE
     wishlists,
     user_hobbies,
     user_interests,
-    user_challenges,
-    experiences
+    user_challenges
 RESTART IDENTITY CASCADE;
 
 COMMIT;

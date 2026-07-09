@@ -1,5 +1,9 @@
 # Render Blueprint — provisions the API (Docker) + a managed Postgres and wires them.
 # Deploy: render.com → New → Blueprint → connect this repo → Apply.
+#
+# Secrets marked `sync: false` are prompted for in the Render dashboard on
+# first deploy — set MSG91 credentials there to enable real OTP SMS, and
+# OTP_REVIEW_PHONE (+ OTP_DEV_CODE) only if an app-store review login is needed.
 
 databases:
   - name: ascent-db
@@ -14,16 +18,26 @@ services:
     plan: free
     healthCheckPath: /health
     envVars:
+      - key: ENV
+        value: prod
       - key: DATABASE_URL
         fromDatabase:
           name: ascent-db
           property: connectionString
       - key: JWT_SECRET
         generateValue: true
-      # Silent dev backdoor OTP (no UI hint). Real per-phone codes also work.
-      - key: OTP_DEV_CODE
-        value: "111111"
       - key: ACCESS_TOKEN_TTL
         value: "1h"
       - key: REFRESH_TOKEN_TTL
         value: "2160h"
+      - key: SMS_PROVIDER
+        value: log # switch to msg91 once credentials below are set
+      - key: MSG91_AUTH_KEY
+        sync: false
+      - key: MSG91_TEMPLATE_ID
+        sync: false
+      # App-store review backdoor: only works for this exact phone in prod.
+      - key: OTP_REVIEW_PHONE
+        sync: false
+      - key: OTP_DEV_CODE
+        sync: false

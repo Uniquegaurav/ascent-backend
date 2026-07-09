@@ -192,14 +192,63 @@ func (r *Repo) SetHobbies(ctx context.Context, userID string, prefs domain.Hobby
 
 // ---- HTTP -----------------------------------------------------------------
 
+// Delete removes the account and all owned data (every user table has
+// ON DELETE CASCADE). Store policy requires in-app account deletion.
+func (r *Repo) Delete(ctx context.Context, userID string) error {
+	_, err := r.pool.Exec(ctx, `DELETE FROM users WHERE id = $1`, userID)
+	return err
+}
+
+// RegisterDevice stores a push token for the user (upsert refreshes the
+// timestamp so stale tokens can be pruned later).
+func (r *Repo) RegisterDevice(ctx context.Context, userID, token, platform string) error {
+	_, err := r.pool.Exec(ctx, `
+		INSERT INTO device_tokens (user_id, token, platform) VALUES ($1, $2, $3)
+		ON CONFLICT (user_id, token) DO UPDATE SET platform = EXCLUDED.platform, updated_at = now()`,
+		userID, token, platform)
+	return err
+}
+
 type Handler struct{ repo *Repo }
 
 func NewHandler(repo *Repo) *Handler { return &Handler{repo: repo} }
 
+// DeleteMe permanently deletes the calling account and its data.
+func (h *Handler) DeleteMe(w http.ResponseWriter, r *http.Request) {
+	if err := h.repo.Delete(r.Context(), httpx.UserID(r)); err != nil {
+		httpx.Internal(w, r, err, "could not delete account")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+type deviceReq struct {
+	Token    string `json:"token"`
+	Platform string `json:"platform"`
+}
+
+// RegisterDevice records an FCM/APNs token for push notifications.
+func (h *Handler) RegisterDevice(w http.ResponseWriter, r *http.Request) {
+	var req deviceReq
+	if err := httpx.Decode(r, &req); err != nil || req.Token == "" {
+		httpx.Error(w, http.StatusBadRequest, "bad request")
+		return
+	}
+	platform := strings.ToUpper(strings.TrimSpace(req.Platform))
+	if platform != "ANDROID" && platform != "IOS" {
+		platform = "UNKNOWN"
+	}
+	if err := h.repo.RegisterDevice(r.Context(), httpx.UserID(r), req.Token, platform); err != nil {
+		httpx.Internal(w, r, err, "could not register device")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
 func (h *Handler) Hobbies(w http.ResponseWriter, r *http.Request) {
 	prefs, err := h.repo.GetHobbies(r.Context(), httpx.UserID(r))
 	if err != nil {
-		httpx.Error(w, http.StatusInternalServerError, "could not load hobbies")
+		httpx.Internal(w, r, err, "could not load hobbies")
 		return
 	}
 	httpx.JSON(w, http.StatusOK, prefs)
@@ -216,7 +265,7 @@ func (h *Handler) SetHobbies(w http.ResponseWriter, r *http.Request) {
 	}
 	prefs, err := h.repo.SetHobbies(r.Context(), httpx.UserID(r), req)
 	if err != nil {
-		httpx.Error(w, http.StatusInternalServerError, "could not save hobbies")
+		httpx.Internal(w, r, err, "could not save hobbies")
 		return
 	}
 	httpx.JSON(w, http.StatusOK, prefs)
@@ -229,7 +278,7 @@ func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 			httpx.Error(w, http.StatusNotFound, "user not found")
 			return
 		}
-		httpx.Error(w, http.StatusInternalServerError, "could not load user")
+		httpx.Internal(w, r, err, "could not load user")
 		return
 	}
 	httpx.JSON(w, http.StatusOK, u)
@@ -252,7 +301,7 @@ func (h *Handler) UpdateName(w http.ResponseWriter, r *http.Request) {
 	}
 	u, err := h.repo.UpdateName(r.Context(), httpx.UserID(r), name)
 	if err != nil {
-		httpx.Error(w, http.StatusInternalServerError, "could not update")
+		httpx.Internal(w, r, err, "could not update")
 		return
 	}
 	httpx.JSON(w, http.StatusOK, u)
@@ -276,7 +325,7 @@ func (h *Handler) Onboarding(w http.ResponseWriter, r *http.Request) {
 	// Name-only signup is allowed; interests are optional and customised later on Home.
 	u, err := h.repo.CompleteOnboarding(r.Context(), httpx.UserID(r), name, req.InterestIDs)
 	if err != nil {
-		httpx.Error(w, http.StatusInternalServerError, "could not save")
+		httpx.Internal(w, r, err, "could not save")
 		return
 	}
 	httpx.JSON(w, http.StatusOK, u)
@@ -309,12 +358,12 @@ func (h *Handler) SetAvatar(w http.ResponseWriter, r *http.Request) {
 	}
 	uid := httpx.UserID(r)
 	if err := h.repo.SaveAvatar(r.Context(), uid, raw, ct); err != nil {
-		httpx.Error(w, http.StatusInternalServerError, "could not save avatar")
+		httpx.Internal(w, r, err, "could not save avatar")
 		return
 	}
 	u, err := h.repo.Get(r.Context(), uid)
 	if err != nil {
-		httpx.Error(w, http.StatusInternalServerError, "could not load user")
+		httpx.Internal(w, r, err, "could not load user")
 		return
 	}
 	httpx.JSON(w, http.StatusOK, u)

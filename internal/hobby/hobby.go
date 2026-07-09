@@ -135,7 +135,7 @@ func (h *Handler) Guide(w http.ResponseWriter, r *http.Request) {
 	}
 	g, err := h.repo.Guide(r.Context(), id)
 	if err != nil {
-		httpx.Error(w, http.StatusInternalServerError, "could not load hobby guide")
+		httpx.Internal(w, r, err, "could not load hobby guide")
 		return
 	}
 	httpx.JSON(w, http.StatusOK, g)

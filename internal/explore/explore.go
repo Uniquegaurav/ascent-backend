@@ -2,10 +2,12 @@ package explore
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -128,11 +130,38 @@ func (h *Handler) searchItems(ctx context.Context, query, category, kind string,
 	if err != nil {
 		return nil
 	}
+	h.persistPlaces(res)
 	out := make([]domain.ExploreItem, 0, len(res))
 	for _, p := range res {
 		out = append(out, placeToItem(p, category, kind))
 	}
 	return out
+}
+
+// persistPlaces writes every fetched place into places_catalog (fire-and-forget)
+// so the catalog becomes a server-owned asset instead of a per-request API cost.
+func (h *Handler) persistPlaces(res []places.Place) {
+	if h.pool == nil || len(res) == 0 {
+		return
+	}
+	go func(res []places.Place) {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		for _, p := range res {
+			_, err := h.pool.Exec(ctx, `
+				INSERT INTO places_catalog (place_id, name, address, lat, lng, rating, ratings_total, types, photo_ref)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+				ON CONFLICT (place_id) DO UPDATE SET
+					name = EXCLUDED.name, address = EXCLUDED.address,
+					rating = EXCLUDED.rating, ratings_total = EXCLUDED.ratings_total,
+					photo_ref = EXCLUDED.photo_ref, last_seen = now()`,
+				p.PlaceID, p.Name, p.Address, p.Lat, p.Lng, p.Rating, p.RatingsTotal, p.Types, p.PhotoRef)
+			if err != nil {
+				slog.Warn("places_catalog upsert failed", "err", err)
+				return
+			}
+		}
+	}(res)
 }
 
 // Hobby launchers are curated; tapping one runs a Places search for nearby teachers.
@@ -334,15 +363,6 @@ func (h *Handler) Photo(w http.ResponseWriter, r *http.Request) {
 	if ct != "" {
 		w.Header().Set("Content-Type", ct)
 	}
-}
-
-// Debug surfaces Google's raw status/error for the configured key (temporary).
-func (h *Handler) Debug(w http.ResponseWriter, r *http.Request) {
-	lat, lng := parseLatLng(r)
-	if lat == 0 && lng == 0 {
-		lat, lng = 12.9716, 77.5946
-	}
-	httpx.JSON(w, http.StatusOK, h.pc.Diagnose(r.Context(), lat, lng))
 }
 
 func (h *Handler) ReverseGeocode(w http.ResponseWriter, r *http.Request) {

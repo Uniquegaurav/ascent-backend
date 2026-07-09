@@ -118,7 +118,7 @@ func (h *Handler) Connect(w http.ResponseWriter, r *http.Request) {
 		 ON CONFLICT (user_id, provider) DO UPDATE SET connected_at = now()`,
 		httpx.UserID(r), id)
 	if err != nil {
-		httpx.Error(w, http.StatusInternalServerError, "could not connect")
+		httpx.Internal(w, r, err, "could not connect")
 		return
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"integrations": h.repo.list(r.Context(), httpx.UserID(r))})
@@ -128,7 +128,7 @@ func (h *Handler) Disconnect(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if _, err := h.repo.pool.Exec(r.Context(),
 		`DELETE FROM user_integrations WHERE user_id = $1 AND provider = $2`, httpx.UserID(r), id); err != nil {
-		httpx.Error(w, http.StatusInternalServerError, "could not disconnect")
+		httpx.Internal(w, r, err, "could not disconnect")
 		return
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"integrations": h.repo.list(r.Context(), httpx.UserID(r))})

@@ -116,7 +116,7 @@ type listResp struct {
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	items, err := h.repo.List(r.Context(), httpx.UserID(r))
 	if err != nil {
-		httpx.Error(w, http.StatusInternalServerError, "could not load wishlist")
+		httpx.Internal(w, r, err, "could not load wishlist")
 		return
 	}
 	httpx.JSON(w, http.StatusOK, listResp{Items: items})
@@ -138,7 +138,7 @@ func (h *Handler) Add(w http.ResponseWriter, r *http.Request) {
 	}
 	saved, err := h.repo.Add(r.Context(), httpx.UserID(r), req.Item)
 	if err != nil {
-		httpx.Error(w, http.StatusInternalServerError, "could not save to wishlist")
+		httpx.Internal(w, r, err, "could not save to wishlist")
 		return
 	}
 	httpx.JSON(w, http.StatusCreated, saved)
@@ -164,7 +164,7 @@ func (h *Handler) UpdatePlan(w http.ResponseWriter, r *http.Request) {
 			httpx.Error(w, http.StatusNotFound, "wishlist item not found")
 			return
 		}
-		httpx.Error(w, http.StatusInternalServerError, "could not update plan")
+		httpx.Internal(w, r, err, "could not update plan")
 		return
 	}
 	httpx.JSON(w, http.StatusOK, updated)
@@ -172,7 +172,7 @@ func (h *Handler) UpdatePlan(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) Remove(w http.ResponseWriter, r *http.Request) {
 	if err := h.repo.Remove(r.Context(), httpx.UserID(r), chi.URLParam(r, "id")); err != nil {
-		httpx.Error(w, http.StatusInternalServerError, "could not remove")
+		httpx.Internal(w, r, err, "could not remove")
 		return
 	}
 	httpx.JSON(w, http.StatusOK, map[string]bool{"ok": true})

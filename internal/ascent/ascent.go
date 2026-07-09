@@ -48,7 +48,7 @@ func (r *Repo) FindBySource(ctx context.Context, userID, sourceID string) (domai
 		       (SELECT COUNT(*) FROM logs l WHERE l.ascent_id = a.id)::int AS log_count, a.created_at, a.parent_id, a.interest_id
 		FROM ascents a WHERE a.user_id = $1 AND a.source_item_id = $2 LIMIT 1`, userID, sourceID)
 	a, err := scanAscentRow(row)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.Ascent{}, false, nil
 	}
 	if err != nil {
@@ -57,11 +57,14 @@ func (r *Repo) FindBySource(ctx context.Context, userID, sourceID string) (domai
 	return a, true, nil
 }
 
-// AllLogs returns every log the user has written, across all ascents (central feed).
-func (r *Repo) AllLogs(ctx context.Context, userID string) ([]domain.Log, error) {
+// AllLogs returns the user's logs across all ascents (central feed), newest
+// first, paginated by created_at.
+func (r *Repo) AllLogs(ctx context.Context, userID string, limit int, before *time.Time) ([]domain.Log, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT id, ascent_id, title, note, mood_score, location_name, lat, lng, image_urls, metrics, created_at
-		FROM logs WHERE user_id = $1 ORDER BY created_at DESC LIMIT 100`, userID)
+		FROM logs
+		WHERE user_id = $1 AND ($3::timestamptz IS NULL OR created_at < $3)
+		ORDER BY created_at DESC LIMIT $2`, userID, limit, before)
 	if err != nil {
 		return nil, err
 	}
@@ -170,15 +173,18 @@ func (r *Repo) Summit(ctx context.Context, userID, id string) error {
 	return err
 }
 
-func (r *Repo) Feed(ctx context.Context, userID string) ([]domain.FeedItem, error) {
+func (r *Repo) Feed(ctx context.Context, userID string, limit int, before *time.Time) ([]domain.FeedItem, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT l.id, u.name, u.avatar_hue, (l.user_id = $1) AS is_self,
-		       l.title, l.note, COALESCE(a.category, ''), l.location_name, l.created_at
+		       l.title, l.note, COALESCE(a.category, ''), l.location_name, l.created_at,
+		       (SELECT COUNT(*) FROM log_reactions lr WHERE lr.log_id = l.id)::int AS reactions,
+		       EXISTS(SELECT 1 FROM log_reactions lr WHERE lr.log_id = l.id AND lr.user_id = $1) AS reacted_by_me
 		FROM logs l
 		JOIN users u ON u.id = l.user_id
 		LEFT JOIN ascents a ON a.id = l.ascent_id
-		WHERE l.user_id = $1 OR u.is_demo = TRUE
-		ORDER BY l.created_at DESC LIMIT 50`, userID)
+		WHERE (l.user_id = $1 OR u.is_demo = TRUE)
+		  AND ($3::timestamptz IS NULL OR l.created_at < $3)
+		ORDER BY l.created_at DESC LIMIT $2`, userID, limit, before)
 	if err != nil {
 		return nil, err
 	}
@@ -188,7 +194,7 @@ func (r *Repo) Feed(ctx context.Context, userID string) ([]domain.FeedItem, erro
 		var fi domain.FeedItem
 		var locName *string
 		var createdAt time.Time
-		if err := rows.Scan(&fi.ID, &fi.AuthorName, &fi.AuthorHue, &fi.IsSelf, &fi.Title, &fi.Description, &fi.Category, &locName, &createdAt); err != nil {
+		if err := rows.Scan(&fi.ID, &fi.AuthorName, &fi.AuthorHue, &fi.IsSelf, &fi.Title, &fi.Description, &fi.Category, &locName, &createdAt, &fi.Reactions, &fi.ReactedByMe); err != nil {
 			return nil, err
 		}
 		if fi.IsSelf {
@@ -201,6 +207,42 @@ func (r *Repo) Feed(ctx context.Context, userID string) ([]domain.FeedItem, erro
 	return out, rows.Err()
 }
 
+// React/Unreact toggle a kudos on a log. Feed items are logs, so the id here
+// is a log id.
+func (r *Repo) React(ctx context.Context, userID, logID string) error {
+	_, err := r.pool.Exec(ctx, `
+		INSERT INTO log_reactions (log_id, user_id) VALUES ($1, $2)
+		ON CONFLICT (log_id, user_id) DO NOTHING`, logID, userID)
+	return err
+}
+
+func (r *Repo) Unreact(ctx context.Context, userID, logID string) error {
+	_, err := r.pool.Exec(ctx, `DELETE FROM log_reactions WHERE log_id = $1 AND user_id = $2`, logID, userID)
+	return err
+}
+
+// LogOwner returns the author of a log (for the visibility check on kudos).
+func (r *Repo) LogOwner(ctx context.Context, logID string) (string, error) {
+	var owner string
+	err := r.pool.QueryRow(ctx, `SELECT user_id FROM logs WHERE id = $1`, logID).Scan(&owner)
+	return owner, err
+}
+
+// CanViewUser reports whether viewer may see target's activity: demo users
+// are public sample content; real users require an accepted friendship in
+// either direction.
+func (r *Repo) CanViewUser(ctx context.Context, viewerID, targetID string) (bool, error) {
+	var ok bool
+	err := r.pool.QueryRow(ctx, `
+		SELECT EXISTS(SELECT 1 FROM users WHERE id = $2 AND is_demo)
+		    OR EXISTS(
+		       SELECT 1 FROM friendships
+		       WHERE status = 'FOLLOWING'
+		         AND ((user_id = $1 AND other_id = $2) OR (user_id = $2 AND other_id = $1)))`,
+		viewerID, targetID).Scan(&ok)
+	return ok, err
+}
+
 func (r *Repo) Invite(ctx context.Context, fromUser, toUser, ascentID string) error {
 	_, err := r.pool.Exec(ctx,
 		`INSERT INTO ascent_invites (from_user, to_user, ascent_id) VALUES ($1, $2, $3)`,
@@ -208,10 +250,12 @@ func (r *Repo) Invite(ctx context.Context, fromUser, toUser, ascentID string) er
 	return err
 }
 
-func (r *Repo) FriendLogs(ctx context.Context, friendID string) ([]domain.Log, error) {
+func (r *Repo) FriendLogs(ctx context.Context, friendID string, limit int, before *time.Time) ([]domain.Log, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT id, ascent_id, title, note, mood_score, location_name, lat, lng, image_urls, metrics, created_at
-		FROM logs WHERE user_id = $1 ORDER BY created_at DESC LIMIT 20`, friendID)
+		FROM logs
+		WHERE user_id = $1 AND ($3::timestamptz IS NULL OR created_at < $3)
+		ORDER BY created_at DESC LIMIT $2`, friendID, limit, before)
 	if err != nil {
 		return nil, err
 	}
@@ -320,7 +364,7 @@ func NewHandler(repo *Repo) *Handler { return &Handler{repo: repo} }
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	items, err := h.repo.List(r.Context(), httpx.UserID(r))
 	if err != nil {
-		httpx.Error(w, http.StatusInternalServerError, "could not load ascents")
+		httpx.Internal(w, r, err, "could not load ascents")
 		return
 	}
 	httpx.JSON(w, http.StatusOK, items)
@@ -381,7 +425,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 
 	created, err := h.repo.Create(r.Context(), uid, a, source)
 	if err != nil {
-		httpx.Error(w, http.StatusInternalServerError, "could not create ascent")
+		httpx.Internal(w, r, err, "could not create ascent")
 		return
 	}
 	httpx.JSON(w, http.StatusCreated, created)
@@ -396,12 +440,12 @@ func (h *Handler) Detail(w http.ResponseWriter, r *http.Request) {
 			httpx.Error(w, http.StatusNotFound, "ascent not found")
 			return
 		}
-		httpx.Error(w, http.StatusInternalServerError, "could not load ascent")
+		httpx.Internal(w, r, err, "could not load ascent")
 		return
 	}
 	logs, err := h.repo.Logs(r.Context(), id)
 	if err != nil {
-		httpx.Error(w, http.StatusInternalServerError, "could not load logs")
+		httpx.Internal(w, r, err, "could not load logs")
 		return
 	}
 	httpx.JSON(w, http.StatusOK, domain.AscentDetail{Ascent: a, Logs: logs})
@@ -438,7 +482,7 @@ func (h *Handler) AddLog(w http.ResponseWriter, r *http.Request) {
 			httpx.Error(w, http.StatusNotFound, "ascent not found")
 			return
 		}
-		httpx.Error(w, http.StatusInternalServerError, "could not add log")
+		httpx.Internal(w, r, err, "could not add log")
 		return
 	}
 	httpx.JSON(w, http.StatusCreated, log)
@@ -446,29 +490,68 @@ func (h *Handler) AddLog(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) Summit(w http.ResponseWriter, r *http.Request) {
 	if err := h.repo.Summit(r.Context(), httpx.UserID(r), chi.URLParam(r, "id")); err != nil {
-		httpx.Error(w, http.StatusInternalServerError, "could not summit")
+		httpx.Internal(w, r, err, "could not summit")
 		return
 	}
 	httpx.JSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 func (h *Handler) Feed(w http.ResponseWriter, r *http.Request) {
-	feed, err := h.repo.Feed(r.Context(), httpx.UserID(r))
+	limit, before := httpx.Pagination(r, 50, 100)
+	feed, err := h.repo.Feed(r.Context(), httpx.UserID(r), limit, before)
 	if err != nil {
-		httpx.Error(w, http.StatusInternalServerError, "could not load feed")
+		httpx.Internal(w, r, err, "could not load feed")
 		return
+	}
+	if len(feed) > 0 {
+		httpx.NextCursor(w, len(feed) == limit, feed[len(feed)-1].TimestampEpochMs)
 	}
 	httpx.JSON(w, http.StatusOK, feed)
 }
 
 // AllLogs is the central log feed for the My Ascents screen (all logs, any ascent).
 func (h *Handler) AllLogs(w http.ResponseWriter, r *http.Request) {
-	logs, err := h.repo.AllLogs(r.Context(), httpx.UserID(r))
+	limit, before := httpx.Pagination(r, 100, 200)
+	logs, err := h.repo.AllLogs(r.Context(), httpx.UserID(r), limit, before)
 	if err != nil {
-		httpx.Error(w, http.StatusInternalServerError, "could not load logs")
+		httpx.Internal(w, r, err, "could not load logs")
 		return
 	}
+	if len(logs) > 0 {
+		httpx.NextCursor(w, len(logs) == limit, logs[len(logs)-1].DateEpochMs)
+	}
 	httpx.JSON(w, http.StatusOK, logs)
+}
+
+// React / Unreact add and remove a kudos on a feed log. Reacting requires the
+// log to be visible to the caller (own, demo, or friend content).
+func (h *Handler) React(w http.ResponseWriter, r *http.Request) {
+	h.mutateReaction(w, r, h.repo.React)
+}
+
+func (h *Handler) Unreact(w http.ResponseWriter, r *http.Request) {
+	h.mutateReaction(w, r, h.repo.Unreact)
+}
+
+func (h *Handler) mutateReaction(w http.ResponseWriter, r *http.Request, op func(context.Context, string, string) error) {
+	uid, logID := httpx.UserID(r), chi.URLParam(r, "id")
+	owner, err := h.repo.LogOwner(r.Context(), logID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			httpx.Error(w, http.StatusNotFound, "log not found")
+			return
+		}
+		httpx.Internal(w, r, err, "could not react")
+		return
+	}
+	if owner != uid && !h.requireFriend(w, r, uid, owner) {
+		return
+	}
+	if err := op(r.Context(), uid, logID); err != nil {
+		httpx.Internal(w, r, err, "could not react")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 type inviteReq struct {
@@ -481,20 +564,47 @@ func (h *Handler) Invite(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "bad request")
 		return
 	}
-	if err := h.repo.Invite(r.Context(), httpx.UserID(r), chi.URLParam(r, "id"), req.AscentID); err != nil {
-		httpx.Error(w, http.StatusInternalServerError, "could not invite")
+	uid, friendID := httpx.UserID(r), chi.URLParam(r, "id")
+	if !h.requireFriend(w, r, uid, friendID) {
+		return
+	}
+	if err := h.repo.Invite(r.Context(), uid, friendID, req.AscentID); err != nil {
+		httpx.Internal(w, r, err, "could not invite")
 		return
 	}
 	httpx.JSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 func (h *Handler) FriendLogs(w http.ResponseWriter, r *http.Request) {
-	logs, err := h.repo.FriendLogs(r.Context(), chi.URLParam(r, "id"))
-	if err != nil {
-		httpx.Error(w, http.StatusInternalServerError, "could not load logs")
+	uid, friendID := httpx.UserID(r), chi.URLParam(r, "id")
+	if !h.requireFriend(w, r, uid, friendID) {
 		return
 	}
+	limit, before := httpx.Pagination(r, 20, 100)
+	logs, err := h.repo.FriendLogs(r.Context(), friendID, limit, before)
+	if err != nil {
+		httpx.Internal(w, r, err, "could not load logs")
+		return
+	}
+	if len(logs) > 0 {
+		httpx.NextCursor(w, len(logs) == limit, logs[len(logs)-1].DateEpochMs)
+	}
 	httpx.JSON(w, http.StatusOK, logs)
+}
+
+// requireFriend enforces the friendship check and writes the error response
+// itself; callers bail out when it returns false.
+func (h *Handler) requireFriend(w http.ResponseWriter, r *http.Request, uid, friendID string) bool {
+	ok, err := h.repo.CanViewUser(r.Context(), uid, friendID)
+	if err != nil {
+		httpx.Internal(w, r, err, "could not check friendship")
+		return false
+	}
+	if !ok {
+		httpx.Error(w, http.StatusForbidden, "not friends")
+		return false
+	}
+	return true
 }
 
 func orDefault(v, def string) string {

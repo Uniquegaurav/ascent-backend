@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/kumargaurav/summit-backend/internal/auth"
 	"github.com/kumargaurav/summit-backend/internal/config"
 	"github.com/kumargaurav/summit-backend/internal/db"
 	"github.com/kumargaurav/summit-backend/internal/server"
@@ -19,6 +20,10 @@ func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})))
 
 	cfg := config.Load()
+	if err := cfg.Validate(); err != nil {
+		slog.Error("invalid configuration", "err", err)
+		os.Exit(1)
+	}
 	ctx := context.Background()
 
 	pool, err := db.Connect(ctx, cfg.DatabaseURL)
@@ -33,6 +38,25 @@ func main() {
 		os.Exit(1)
 	}
 	slog.Info("migrations applied")
+
+	// Hourly sweep of expired OTPs and dead refresh tokens.
+	cleanupCtx, stopCleanup := context.WithCancel(ctx)
+	defer stopCleanup()
+	go func() {
+		authRepo := auth.NewRepo(pool)
+		ticker := time.NewTicker(time.Hour)
+		defer ticker.Stop()
+		for {
+			if err := authRepo.CleanupExpired(cleanupCtx); err != nil && cleanupCtx.Err() == nil {
+				slog.Error("auth cleanup failed", "err", err)
+			}
+			select {
+			case <-ticker.C:
+			case <-cleanupCtx.Done():
+				return
+			}
+		}
+	}()
 
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,

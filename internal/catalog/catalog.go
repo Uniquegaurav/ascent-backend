@@ -75,7 +75,7 @@ func NewHandler(repo *Repo) *Handler { return &Handler{repo: repo} }
 func (h *Handler) Interests(w http.ResponseWriter, r *http.Request) {
 	items, err := h.repo.Interests(r.Context())
 	if err != nil {
-		httpx.Error(w, http.StatusInternalServerError, "could not load interests")
+		httpx.Internal(w, r, err, "could not load interests")
 		return
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"interests": items})
@@ -84,7 +84,7 @@ func (h *Handler) Interests(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) Cities(w http.ResponseWriter, r *http.Request) {
 	items, err := h.repo.Cities(r.Context())
 	if err != nil {
-		httpx.Error(w, http.StatusInternalServerError, "could not load cities")
+		httpx.Internal(w, r, err, "could not load cities")
 		return
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"cities": items})
@@ -93,7 +93,7 @@ func (h *Handler) Cities(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) PopularSearches(w http.ResponseWriter, r *http.Request) {
 	items, err := h.repo.PopularSearches(r.Context())
 	if err != nil {
-		httpx.Error(w, http.StatusInternalServerError, "could not load searches")
+		httpx.Internal(w, r, err, "could not load searches")
 		return
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"queries": items})

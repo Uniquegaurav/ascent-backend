@@ -92,7 +92,7 @@ func NewHandler(repo *Repo) *Handler { return &Handler{repo: repo} }
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	items, err := h.repo.List(r.Context(), httpx.UserID(r))
 	if err != nil {
-		httpx.Error(w, http.StatusInternalServerError, "could not load friends")
+		httpx.Internal(w, r, err, "could not load friends")
 		return
 	}
 	httpx.JSON(w, http.StatusOK, items)
@@ -121,7 +121,7 @@ func (h *Handler) SyncContacts(w http.ResponseWriter, r *http.Request) {
 	}
 	items, err := h.repo.MatchContacts(r.Context(), httpx.UserID(r), hashes)
 	if err != nil {
-		httpx.Error(w, http.StatusInternalServerError, "could not sync contacts")
+		httpx.Internal(w, r, err, "could not sync contacts")
 		return
 	}
 	httpx.JSON(w, http.StatusOK, items)
@@ -142,7 +142,7 @@ func (h *Handler) mutate(w http.ResponseWriter, r *http.Request, status string) 
 		return
 	}
 	if err := h.repo.SetStatus(r.Context(), httpx.UserID(r), otherID, status); err != nil {
-		httpx.Error(w, http.StatusInternalServerError, "could not update")
+		httpx.Internal(w, r, err, "could not update")
 		return
 	}
 	httpx.JSON(w, http.StatusOK, map[string]bool{"ok": true})

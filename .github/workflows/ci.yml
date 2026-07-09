@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: summit
+          POSTGRES_PASSWORD: summit
+          POSTGRES_DB: summit
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U summit"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Vet
+        run: go vet ./...
+      - name: Test
+        run: go test ./...
+        env:
+          DATABASE_URL: postgres://summit:summit@localhost:5432/summit?sslmode=disable
+      - name: Build
+        run: go build ./...
+      - name: Boot check (migrations + health)
+        run: |
+          ENV=dev go run ./cmd/api &
+          for i in $(seq 1 30); do
+            curl -sf localhost:8080/health && exit 0
+            sleep 1
+          done
+          echo "server never became healthy" && exit 1
+        env:
+          DATABASE_URL: postgres://summit:summit@localhost:5432/summit?sslmode=disable
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Docker build
+        run: docker build -t summit-backend:ci .

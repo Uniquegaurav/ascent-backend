@@ -5,7 +5,7 @@ B="${1:-http://localhost:8080}"
 say() { printf "\n# %s\n" "$1"; }
 
 say "health";      curl -s "$B/health"; echo
-TOKEN=$(curl -s -XPOST "$B/auth/verify-otp" -d '{"phone":"+919888800000","code":"000000"}' \
+TOKEN=$(curl -s -XPOST "$B/auth/verify-otp" -d '{"phone":"+919888800000","code":"'"${SMOKE_OTP:-000000}"'"}' \
   | sed -E 's/.*"token":"([^"]+)".*/\1/')
 A="Authorization: Bearer $TOKEN"
 
