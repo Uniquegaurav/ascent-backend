@@ -76,6 +76,24 @@ type Friend struct {
 	LastAscent    *string `json:"lastAscent"`
 }
 
+// Duel is a head-to-head, oriented from the requesting user's perspective
+// ("you" vs "them") with both live scores.
+type Duel struct {
+	ID              string `json:"id"`
+	Status          string `json:"status"`
+	InterestID      string `json:"interestId"`
+	IsChallenger    bool   `json:"isChallenger"`
+	YouName         string `json:"youName"`
+	ThemName        string `json:"themName"`
+	YouScore        int    `json:"youScore"`
+	ThemScore       int    `json:"themScore"`
+	ChallengerName  string `json:"challengerName"`
+	OpponentName    string `json:"opponentName"`
+	ChallengerScore int    `json:"challengerScore"`
+	OpponentScore   int    `json:"opponentScore"`
+	EndsAtMs        int64  `json:"endsAtMs"`
+}
+
 type Challenge struct {
 	ID          string `json:"id"`
 	Title       string `json:"title"`
