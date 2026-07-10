@@ -15,14 +15,21 @@ import (
 	"github.com/kumargaurav/summit-backend/internal/domain"
 	"github.com/kumargaurav/summit-backend/internal/httpx"
 	"github.com/kumargaurav/summit-backend/internal/places"
+	"github.com/kumargaurav/summit-backend/internal/providers"
 )
 
 type Handler struct {
 	pc   *places.Client
 	pool *pgxpool.Pool
+	prov *providers.Providers
 }
 
-func NewHandler(pc *places.Client, pool *pgxpool.Pool) *Handler { return &Handler{pc: pc, pool: pool} }
+// NewHandler wires the Places client, DB pool, and the external content
+// providers. prov may be nil (providers are then simply skipped and the
+// hardcoded catalog is served as-is).
+func NewHandler(pc *places.Client, pool *pgxpool.Pool, prov *providers.Providers) *Handler {
+	return &Handler{pc: pc, pool: pool, prov: prov}
+}
 
 var defaultHobbyIDs = []string{"trekking", "running", "music"}
 
@@ -295,17 +302,34 @@ func (h *Handler) Detail(w http.ResponseWriter, r *http.Request) {
 		if m.desc != "" {
 			t.Description = m.desc
 		}
-		httpx.JSON(w, http.StatusOK, domain.ExploreDetail{
+		detail := domain.ExploreDetail{
 			Item:    t.WithSummitCategory(),
 			Photos:  []string{t.ImageURL},
 			Facts:   m.facts,
 			InfoURL: trekInfoURL(t),
-		})
+		}
+		// Prefer real Wikipedia/Commons content; the hardcoded trek_meta blurb +
+		// image above stays as the fallback when the providers return nothing.
+		detail = h.enrich(r.Context(), detail)
+		httpx.JSON(w, http.StatusOK, detail)
 		return
+	}
+	// OSM trails/peaks surfaced from Overpass: resolve from the trails catalog
+	// and enrich with Wikipedia/Commons content so the card isn't a dead end.
+	if strings.HasPrefix(id, "osm_") {
+		if it, ok := h.trailItemByID(r.Context(), id); ok {
+			detail := domain.ExploreDetail{Item: it, Photos: []string{it.ImageURL}}
+			detail = h.enrich(r.Context(), detail)
+			httpx.JSON(w, http.StatusOK, detail)
+			return
+		}
 	}
 	if !h.pc.Enabled() {
 		if it, ok := fallbackItem(id); ok {
-			httpx.JSON(w, http.StatusOK, domain.ExploreDetail{Item: it.WithSummitCategory()})
+			detail := domain.ExploreDetail{Item: it.WithSummitCategory(), Photos: []string{it.ImageURL}}
+			// Enrich the built-in catalog item with real Wikipedia/Commons content.
+			detail = h.enrich(r.Context(), detail)
+			httpx.JSON(w, http.StatusOK, detail)
 			return
 		}
 		httpx.Error(w, http.StatusNotFound, "not found")

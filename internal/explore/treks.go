@@ -176,6 +176,21 @@ func (h *Handler) Treks(w http.ResponseWriter, r *http.Request) {
 		stateItems = indiaTreks[:6]
 	}
 
+	// Supplement the hardcoded "near you" row with real hiking routes/peaks from
+	// OpenStreetMap (Overpass). On any error/empty the provider fails soft and we
+	// keep the hardcoded rows above.
+	if (lat != 0 || lng != 0) && h.prov != nil && h.prov.Trail != nil {
+		if trails := h.prov.Trail.Nearby(r.Context(), lat, lng, 25000); len(trails) > 0 {
+			h.persistTrails(trails)
+			nearby := make([]domain.ExploreItem, 0, len(trails))
+			for _, t := range take2(trails, 12) {
+				nearby = append(nearby, trailToItem(t))
+			}
+			stateItems = append(nearby, stateItems...)
+			stateTitle = "Trails near you"
+		}
+	}
+
 	resp := TreksResponse{
 		State:   state,
 		Country: countryName(cc),

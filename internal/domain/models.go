@@ -140,6 +140,9 @@ type ExploreDetail struct {
 	Facts []Fact `json:"facts"`
 	// InfoURL links out to an authoritative guide (IndiaHikes / AllTrails / official).
 	InfoURL string `json:"infoUrl"`
+	// Sources credits external content providers (Wikipedia / Wikimedia Commons)
+	// when their extract/images are used, for attribution.
+	Sources []string `json:"sources"`
 }
 
 type ExploreSection struct {

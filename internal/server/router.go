@@ -19,6 +19,7 @@ import (
 	"github.com/kumargaurav/summit-backend/internal/httpx"
 	"github.com/kumargaurav/summit-backend/internal/integration"
 	"github.com/kumargaurav/summit-backend/internal/places"
+	"github.com/kumargaurav/summit-backend/internal/providers"
 	"github.com/kumargaurav/summit-backend/internal/user"
 	"github.com/kumargaurav/summit-backend/internal/wishlist"
 )
@@ -35,8 +36,9 @@ func New(pool *pgxpool.Pool, cfg config.Config) http.Handler {
 	authH := auth.NewHandler(authSvc)
 
 	pc := places.New(cfg.GooglePlacesKey)
+	prov := providers.New()
 	userH := user.NewHandler(user.NewRepo(pool))
-	exploreH := explore.NewHandler(pc, pool)
+	exploreH := explore.NewHandler(pc, pool, prov)
 	ascentH := ascent.NewHandler(ascent.NewRepo(pool))
 	friendH := friend.NewHandler(friend.NewRepo(pool))
 	discoveryH := discovery.NewHandler(discovery.NewService(pc))
