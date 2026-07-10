@@ -11,6 +11,7 @@ import (
 	"github.com/kumargaurav/summit-backend/internal/ascent"
 	"github.com/kumargaurav/summit-backend/internal/auth"
 	"github.com/kumargaurav/summit-backend/internal/catalog"
+	"github.com/kumargaurav/summit-backend/internal/challenge"
 	"github.com/kumargaurav/summit-backend/internal/config"
 	"github.com/kumargaurav/summit-backend/internal/discovery"
 	"github.com/kumargaurav/summit-backend/internal/explore"
@@ -43,6 +44,7 @@ func New(pool *pgxpool.Pool, cfg config.Config) http.Handler {
 	friendH := friend.NewHandler(friend.NewRepo(pool))
 	discoveryH := discovery.NewHandler(discovery.NewService(pc))
 	catalogH := catalog.NewHandler(catalog.NewRepo(pool))
+	challengeH := challenge.NewHandler(challenge.NewRepo(pool))
 	hobbyH := hobby.NewHandler(hobby.NewRepo(pool))
 	integrationH := integration.NewHandler(integration.NewRepo(pool))
 	wishlistH := wishlist.NewHandler(wishlist.NewRepo(pool))
@@ -125,6 +127,10 @@ func New(pool *pgxpool.Pool, cfg config.Config) http.Handler {
 		pr.Get("/experiences/feed", ascentH.Feed)
 		pr.Post("/logs/{id}/reactions", ascentH.React)
 		pr.Delete("/logs/{id}/reactions", ascentH.Unreact)
+
+		pr.Get("/challenges", challengeH.List)
+		pr.Post("/challenges/{id}/join", challengeH.Join)
+		pr.Post("/challenges/{id}/leave", challengeH.Leave)
 
 		pr.Get("/friends/list", friendH.List)
 		pr.Post("/friends/sync-contacts", friendH.SyncContacts)
